@@ -7,10 +7,10 @@ cp4iInstanceId="${cp4iInstanceId:-integration-fs34sd}"
 
 # Keycloak info
 keycloakUrl="keycloak-keycloak.apps.hawking-keycloak.cp.fyre.ibm.com"
-keycloakRealm="cp4i"
-keycloakClientName="cloudPakForIntegration"
-keycloakClientSecret="bFIDvqn0orTthDr1jUImkTvyfpxyCIBx"
-keycloakAdminPass="icp4iprivate1"
+keycloakRealm="${keycloakRealm:-cp4i}"
+keycloakClientName="${keycloakClientName:-cloudPakForIntegration}"
+keycloakClientSecret="${keycloakClientSecret:-bFIDvqn0orTthDr1jUImkTvyfpxyCIBx}"
+keycloakAdminPass="${keycloakAdminPass:-icp4iprivate1}"
 keycloakApiEndpoint="$keycloakUrl/admin/realms/$keycloakRealm"
 
 ### Functions
@@ -198,9 +198,14 @@ function createTeam() { # $1 = teamName $2=roleId $3=roleName $4=users
     }
 }"
   getGroupId "$1"
-  addRoleToGroup "$2" "$3" "$groupId"
-  addUsersToGroup "$groupId" "$4"
-  echo ""
+  if [ -z "$groupId" ]
+  then
+    echo "Unable to find group id for $1. Users and roles will not be added..."
+  else
+    addRoleToGroup "$2" "$3" "$groupId"
+    addUsersToGroup "$groupId" "$4"
+    echo ""
+  fi
 
 }
 
@@ -219,14 +224,23 @@ function getClientId {
 }
 
 function getGroupId() { # $1 = group name
-  clientGroups="$(curl -ks --location "https://$keycloakApiEndpoint/groups" \
-    --header "Authorization: Bearer $keycloakAccessToken")"
-  groupId="$(echo $clientGroups | jq -r ". | map(select(.name == \"$1\")) | .[].id")"
+  groupId="$(curl -ks --location "https://$keycloakApiEndpoint/groups" \
+    --header "Authorization: Bearer $keycloakAccessToken" \
+    | jq -r ". | map(select(.name == \"$1\")) | .[].id")"
+
+  if [ -z "$groupId" ]
+  then
+        echo ""
+        echo "Unable to find ID for group ( in realm $keycloakRealm, exiting..."
+        exit 1
+  fi
 }
 
 function getClientRoleIds {
   cp4iRoles="$(curl -ks --location "https://$keycloakApiEndpoint/clients/$cp4iClientId/roles" \
     --header "Authorization: Bearer $keycloakAccessToken")"
+
+  # Does the above API call fail?
 
   cp4iAdminRoleUid="$(echo $cp4iRoles | jq -r ". | map(select(.name == \"administrator\")) | .[].id")"
   cp4iEditorRoleUid="$(echo $cp4iRoles | jq -r ". | map(select(.name == \"editor\")) | .[].id")"
@@ -274,7 +288,6 @@ function processLdapGroups() { # $1 = groups $2 = roleId $3 = roleName
       echo ""
     else
       addRoleToGroup "$cp4iAdminRoleUid" "administrator" "$groupId" "$cp4iClientId"
-      # Add attributes to the group
       addAttributesToGroup "$groupId" "{ \"integration.ibm.com/migrated\": [true], \"integration.ibm.com/namespaces\": $teamNamespaces }"
     fi
   done
@@ -284,7 +297,11 @@ function addUsersToGroup() { # $1= groupId, $2= users
   echo "$2" | jq -r '.[]' | while read i; do
     searchResults="$(curl -ks --location "https://$keycloakApiEndpoint/users?search=$i" \
       --header "Authorization: Bearer $keycloakAccessToken")"
+    
+    # Does the above API call fail?
+    
     searchCount="$(echo "$searchResults" | jq -r length)"
+    
     if [[ "$searchCount" -eq "1" ]]; 
     then
       userId="$(echo "$searchResults" | jq -r '.[].id')"
@@ -300,6 +317,9 @@ function addUsersToGroup() { # $1= groupId, $2= users
 function addAttributesToGroup() { #$1= groupId $2=attributes
   groupMetaData="$(curl -ks --location "https://$keycloakApiEndpoint/groups/$1" \
     --header "Authorization: Bearer $keycloakAccessToken")"
+  
+  # Does the above API call fail?
+  
   groupMetaDataWithAttributes="$(echo $groupMetaData | jq -r ".attributes += $2")"
 
   curl -ks --location --request PUT "https://$keycloakApiEndpoint/groups/$1" \
