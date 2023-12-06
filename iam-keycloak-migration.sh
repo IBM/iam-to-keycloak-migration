@@ -3,7 +3,10 @@
 # Params check, what is the cp4i namespace?
 cp4iNamespace="${cp4iNamespace:-navigator-ns}"
 commonServicesNamespace="${commonServicesNamespace:-ibm-common-services}"
-keycloakRealm="cloudpak"
+
+keycloakRealm="master"
+keycloakCloudPakRealm="cloudpak"
+checkAgainstKeycloak="true"
 
 ### Functions
 # Get an access token
@@ -17,6 +20,18 @@ function getCsAccessToken {
     --data-urlencode "scope=openid" \
     --data-urlencode "client_id=$cp4iClientId" \
     --data-urlencode "client_secret=$cp4iClientSecret" \
+    --data-urlencode "grant_type=password" \
+    | jq -r .access_token)"
+}
+
+function getKeycloakcsAccessToken {
+    echo ""
+    echo "Generating Keycloak access token..."
+   keycloakAccessToken="$(curl -ks --location "https://$keycloakUrl/realms/master/protocol/openid-connect/token" \
+    --header "Content-Type: application/x-www-form-urlencoded" \
+    --data-urlencode "password=$keycloakAdminPass" \
+    --data-urlencode "username=admin" \
+    --data-urlencode "client_id=admin-cli" \
     --data-urlencode "grant_type=password" \
     | jq -r .access_token)"
 }
@@ -83,9 +98,9 @@ function processAdmins {
   if [[ "$userCount" -gt "0" ]]; 
   then
     users=$(echo "$teamAdmins" | jq -r '. | join(", ")')
-    echo "Create a group in the $keycloakRealm realm called '$teamName-admins'"
-    echo "Add users $users to '$teamName-admins' group"
-    echo "Add 'admin' role to '$teamName-admins' group"
+    echo "[ ] Create a group in the $keycloakCloudPakRealm realm called '$teamName-admins'"
+    echo "[ ] Add users $users to '$teamName-admins' group"
+    echo "[ ] Add 'admin' role to '$teamName-admins' group"
   fi
 
   # process groups
@@ -94,7 +109,7 @@ function processAdmins {
   then
     # Loop through each group
     echo "$groupAdmins" | jq -c '.[]' | while read i; do
-        echo "Add 'admin' role to existing LDAP group $i"
+        echo "[ ] Add 'admin' role to existing LDAP group $i"
     done
   fi
   echo ""
@@ -106,9 +121,9 @@ function processEditors {
   if [[ "$userCount" -gt "0" ]]; 
   then
     users=$(echo "$teamEditors" | jq -r '. | join(", ")')
-    echo "Create a group in the $keycloakRealm realm called '$teamName-editors'"
-    echo "Add users $users to '$teamName-editors' group"
-    echo "Add 'editor' role to '$teamName-editors' group"
+    echo "[ ] Create a group in the $keycloakCloudPakRealm realm called '$teamName-editors'"
+    echo "[ ] Add users $users to '$teamName-editors' group"
+    echo "[ ] Add 'editor' role to '$teamName-editors' group"
   fi
 
   # process groups
@@ -117,7 +132,7 @@ function processEditors {
   then
     # Loop through each group
     echo "$groupEditors" | jq -c '.[]' | while read i; do
-        echo "Add 'editor' role to existing LDAP group $i"
+        echo "[ ] Add 'editor' role to existing LDAP group $i"
     done
   fi
   echo ""
@@ -129,9 +144,9 @@ function processViewers {
   if [[ "$userCount" -gt "0" ]]; 
   then
     users=$(echo "$teamViewers" | jq -r '. | join(", ")')
-    echo "Create a group in the $keycloakRealm realm called '$teamName-viewers'"
-    echo "Add users $users to '$teamName-viewers' group"
-    echo "Add 'viewer' role to '$teamName-viewers' group"
+    echo "[ ] Create a group in the $keycloakCloudPakRealm realm called '$teamName-viewers'"
+    echo "[ ] Add users $users to '$teamName-viewers' group"
+    echo "[ ] Add 'viewer' role to '$teamName-viewers' group"
   fi
 
   # process groups
@@ -140,10 +155,16 @@ function processViewers {
   then
     # Loop through each group
     echo "$groupViewers" | jq -c '.[]' | while read i; do
-        echo "Add 'viewer' role to existing LDAP group $i"
+        echo "[ ] Add 'viewer' role to existing LDAP group $i"
     done
   fi
   echo ""
+}
+
+function inspectTeams {
+  echo "$csTeams" | jq -c '.[]' | while read i; do
+      processTeam "$i"
+  done
 }
 
 function checkForLdapConnections {
@@ -186,6 +207,20 @@ function checkForOidcConnections {
   fi
 }
 
+function getKeycloakLdapConnections {
+  keycloakLdapConnections="$(curl -ks "https://$keycloakUrl/admin/realms/$keycloakCloudPakRealm/components?type=org.keycloak.storage.UserStorageProvider" \
+  --header "Authorization: Bearer $keycloakAccessToken")"
+
+  # Check we have not got an error
+  hasError="$(echo $keycloakLdapConnections | jq 'has("error")')"
+  if [ "$hasError" == "true" ]
+  then
+      echo ""
+      echo "An error occurred checking LDAP connections in keycloak, Exiting..."
+      exit 1
+  fi
+}
+
 function inspectIdpConnections {
   ldapCount="$(echo "$ldapConnections" | jq -r length)"
   samlCount="$(echo "$samlConnections" | jq -r '.idp | length')"
@@ -193,44 +228,59 @@ function inspectIdpConnections {
   
   if [[ "$ldapCount" -gt "0" ]]; 
   then
-    echo "LDAP connections to migrate"
-    echo "==========================="
+    if [[ "$checkAgainstKeycloak" == "true" ]]
+    then
+      getKeycloakLdapConnections
+    fi
+    
+    echo "LDAP connections"
+    echo "================"
     echo "$ldapConnections" | jq -c '.[]' | while read i; do
       ldapConnection=$i
       ldapName="$(echo $ldapConnection | jq -r .LDAP_ID)"
       ldapUrl="$(echo $ldapConnection | jq -r .LDAP_URL)"
-      echo "$ldapName - $ldapUrl"
+      migrated=" "
+
+      if [[ "$checkAgainstKeycloak" == "true" ]]
+      then
+        # Check if we the LDAP connection is added to keycloak
+        ldapsFound="$(echo $keycloakLdapConnections | jq -r ". | map(select(.name == \"$ldapName\"))")"
+        ldapCount="$(echo "$ldapsFound" | jq -r length)"
+        if [[ "$ldapCount" -eq "1" ]]
+        then
+          migrated="x"
+        fi
+      fi
+
+      echo "[$migrated] Migrate $ldapName - $ldapUrl"
     done
   fi
 
   if [[ "$samlCount" -gt "0" ]]; 
   then
-    echo "SAML connections to migrate"
-    echo "==========================="
+    # TODO - Check SAML connection in Keycloak
+    echo "SAML connections"
+    echo "================"
     echo "$samlConnections" | jq -c '.idp[]' | while read i; do
       samlConnection=$i
       samlName="$(echo $samlConnection | jq -r .name)"
-      echo "$samlName"
+      echo "[ ] Migrate $samlName"
     done
   fi
 
+  # Maybe we don't bother with this as it's a BETA?!?
   if [[ "$oidcCount" -gt "0" ]]; 
   then
-    echo "OIDC connections to migrate"
-    echo "==========================="
+    # TODO - Check SAML connection in Keycloak
+    echo "OIDC connections"
+    echo "================"
     echo "$oidcConnections" | jq -c '.idp[]' | while read i; do
       oidcConnection=$i
       oidcName="$(echo $oidcConnection | jq -r .name)"
       oidcUrl="$(echo $oidcConnection | jq -r .idp_config.discovery_url)"
-      echo "$oidcName - $oidcUrl"
+      echo "[ ] Migrate $oidcName - $oidcUrl"
     done
   fi
-}
-
-function inspectTeams {
-  echo "$csTeams" | jq -c '.[]' | while read i; do
-      processTeam "$i"
-  done
 }
 
 ### End Functions
@@ -256,12 +306,24 @@ echo "Getting cp4i information..."
 # Get name of the PN
 cp4iName="$(oc get platformnavigators -n $cp4iNamespace -o jsonpath='{.items[0].metadata.name}')"
 
-# Get CP console route
+# Get routes
 cpConsole="$(oc get route -n $commonServicesNamespace cp-console -o jsonpath="{.spec.host}")"
+
+if [[ "$checkAgainstKeycloak" == "true" ]]
+then
+  keycloakUrl="$(oc get route -n $commonServicesNamespace keycloak -o jsonpath="{.spec.host}")"
+
+  if [[ -z "$keycloakUrl" ]]
+  then
+    echo "Unable to find keycloak in $commonServicesNamespace namespace. Exiting..."
+    exit 1
+  fi
+fi
 
 # Secrets Names
 idpCredentialsSecretName="ibm-iam-bindinfo-platform-auth-idp-credentials"
 oidcSecretName="$cp4iName-ibm-inte-3c22-oidc-client"
+keycloakAdminSecretName="cs-keycloak-initial-admin"
 
 # Secrets data
 idpCredentialsData="$(oc get secret $idpCredentialsSecretName -n $cp4iNamespace -o json | jq -r .data)"
@@ -273,6 +335,13 @@ cp4iClientId="$(echo "$oicsSecretData" | jq -r .CLIENT_ID | base64 -d)"
 cp4iClientSecret="$(echo "$oicsSecretData" | jq -r .CLIENT_SECRET | base64 -d)"
 
 getCsAccessToken
+
+if [[ "$checkAgainstKeycloak" == "true" ]]
+then
+  keycloakSecretData="$(oc get secret $keycloakAdminSecretName -n $commonServicesNamespace -o json | jq -r .data)"
+  keycloakAdminPass="$(echo "$keycloakSecretData" | jq -r .password | base64 -d)"
+  getKeycloakcsAccessToken
+fi
 
 echo ""
 echo "Starting IAM migration helper script..."
@@ -300,5 +369,4 @@ inspectIdpConnections
 inspectTeams
 # if we find groups, we need to point out that you need to add the LDAP mapper in keycloak !!
 
-echo ""
 echo "Finished IAM migration helper script"
