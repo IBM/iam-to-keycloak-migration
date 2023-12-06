@@ -1,17 +1,9 @@
 #!/bin/bash
 
 # Params check, what is the cp4i namespace?
-cp4iNamespace="${cp4iNamespace:-integration}"
+cp4iNamespace="${cp4iNamespace:-navigator-ns}"
 commonServicesNamespace="${commonServicesNamespace:-ibm-common-services}"
-cp4iInstanceId="${cp4iInstanceId:-integration-fs34sd}"
-
-# Keycloak info
-keycloakUrl="keycloak-keycloak.apps.hawking-keycloak.cp.fyre.ibm.com"
-keycloakRealm="${keycloakRealm:-cp4i}"
-keycloakClientName="${keycloakClientName:-cloudPakForIntegration}"
-keycloakClientSecret="${keycloakClientSecret:-bFIDvqn0orTthDr1jUImkTvyfpxyCIBx}"
-keycloakAdminPass="${keycloakAdminPass:-icp4iprivate1}"
-keycloakApiEndpoint="$keycloakUrl/admin/realms/$keycloakRealm"
+keycloakRealm="cloudpak"
 
 ### Functions
 # Get an access token
@@ -25,17 +17,6 @@ function getCsAccessToken {
     --data-urlencode "scope=openid" \
     --data-urlencode "client_id=$cp4iClientId" \
     --data-urlencode "client_secret=$cp4iClientSecret" \
-    --data-urlencode "grant_type=password" \
-    | jq -r .access_token)"
-}
-
-function getKeycloakcsAccessToken {
-   keycloakAccessToken="$(curl -ks --location "https://$keycloakUrl/realms/$keycloakRealm/protocol/openid-connect/token" \
-    --header "Content-Type: application/x-www-form-urlencoded" \
-    --data-urlencode "password=$keycloakAdminPass" \
-    --data-urlencode "username=admin" \
-    --data-urlencode "client_id=$keycloakClientName" \
-    --data-urlencode "client_secret=$keycloakClientSecret" \
     --data-urlencode "grant_type=password" \
     | jq -r .access_token)"
 }
@@ -58,51 +39,24 @@ function getCsTeams {
 function processTeam() {
     echo ""
     team="$1"
-    teamId="$(echo "$team" | jq -r .teamId)"
     teamName="$(echo "$team" | jq -r .name)"
     teamType="$(echo "$team" | jq -r .type)"
-    teamNamespaces=""
-    # teamUsers=$(echo "$1" | jq -r ".users | map(.userId)")
-    # teamRoles=$(echo $1 | jq -r ".users | map(.roles)| flatten | map(.id) | unique")
 
-    if [ "$teamType" == "System" ]
+    # Ignore "System" teams
+    if [ "$teamType" == "Custom" ]
     then
-        echo ""
-        echo "$teamName is as system team, ignoring..."
-    else
         # Do some teamwork
-        echo " Processing $teamName..."
+        echo "$teamName team"
+        echo "================"
 
         getTeamUsers "$team" # sets teamAdmins, teamEditors, teamViewers
         getTeamGroups "$team" # sets groupAdmins, groupEditors, groupViewers
-        getResourcesForTeam "$teamId" # sets $teamNamespaces
 
-        # Keycloak pre-reqs
-        getKeycloakcsAccessToken
-        getClientId
-        getClientRoleIds
-        # End Keycloak pre-reqs
+        # Need to tell the user to add a mapper in keycloak to pick up these groups
         
         processAdmins
         processEditors
         processViewers
-    fi
-}
-
-function getResourcesForTeam() {
-    # echo ""
-    # echo "Getting resources for team"
-    teamId="$1"
-    namespaceResources="$(curl -ks "https://$cpConsole/idmgmt/identity/api/v1/teams/$teamId/resources" \
-    --header "Authorization: Bearer $csAccessToken")"
-
-    if [[ $csTeams == Error* ]]
-    then
-        echo ""
-        echo "An error occurred getting resources for team ($teamId)"
-        teamNamespaces="[]"
-    else
-        teamNamespaces="$(echo "$namespaceResources" | jq -r '. | map(select(.scope == "namespace")| .namespaceId)')"
     fi
 }
 
@@ -126,213 +80,162 @@ function getTeamGroups() {
 function processAdmins {
   # process users first
   userCount="$(echo "$teamAdmins" | jq -r length)"
-  if [[ "$userCount" -eq "0" ]]; 
+  if [[ "$userCount" -gt "0" ]]; 
   then
-    echo "No admins to process"
-  else
-    createTeam "$teamName:$cp4iInstanceId:administrators" "$cp4iAdminRoleUid" "administrator" "$teamAdmins"
+    users=$(echo "$teamAdmins" | jq -r '. | join(", ")')
+    echo "Create a group in the $keycloakRealm realm called '$teamName-admins'"
+    echo "Add users $users to '$teamName-admins' group"
+    echo "Add 'admin' role to '$teamName-admins' group"
   fi
 
   # process groups
   groupCount="$(echo "$groupAdmins" | jq -r length)"
-  if [[ "$groupCount" -eq "0" ]]; 
+  if [[ "$groupCount" -gt "0" ]]; 
   then
-    echo "No admin groups to process"
-  else
-    echo "Adding administrator role to LDAP groups in $teamName"
-    # Loop round each group
-    processLdapGroups "$groupAdmins"
+    # Loop through each group
+    echo "$groupAdmins" | jq -c '.[]' | while read i; do
+        echo "Add 'admin' role to existing LDAP group $i"
+    done
   fi
+  echo ""
 }
 
 function processEditors {
   # process users first
   userCount="$(echo "$teamEditors" | jq -r length)"
-  if [[ "$userCount" -eq "0" ]]; 
+  if [[ "$userCount" -gt "0" ]]; 
   then
-    echo "No editors to process"
-  else
-    createTeam "$teamName:$cp4iInstanceId:editors"
+    users=$(echo "$teamEditors" | jq -r '. | join(", ")')
+    echo "Create a group in the $keycloakRealm realm called '$teamName-editors'"
+    echo "Add users $users to '$teamName-editors' group"
+    echo "Add 'editor' role to '$teamName-editors' group"
   fi
 
   # process groups
   groupCount="$(echo "$groupEditors" | jq -r length)"
-  if [[ "$groupCount" -eq "0" ]]; 
+  if [[ "$groupCount" -gt "0" ]]; 
   then
-    echo "No editor groups to process"
-  else
-    echo "Adding editor role to LDAP groups in $teamName"
+    # Loop through each group
+    echo "$groupEditors" | jq -c '.[]' | while read i; do
+        echo "Add 'editor' role to existing LDAP group $i"
+    done
   fi
+  echo ""
 }
 
 function processViewers {
   # process users first
   userCount="$(echo "$teamViewers" | jq -r length)"
-  if [[ "$userCount" -eq "0" ]]; 
+  if [[ "$userCount" -gt "0" ]]; 
   then
-    echo "No viewers to process"
-  else
-    createTeam "$teamName:$cp4iInstanceId:viewers"
+    users=$(echo "$teamViewers" | jq -r '. | join(", ")')
+    echo "Create a group in the $keycloakRealm realm called '$teamName-viewers'"
+    echo "Add users $users to '$teamName-viewers' group"
+    echo "Add 'viewer' role to '$teamName-viewers' group"
   fi
 
   # process groups
   groupCount="$(echo "$groupViewers" | jq -r length)"
-  if [[ "$groupCount" -eq "0" ]]; 
+  if [[ "$groupCount" -gt "0" ]]; 
   then
-    echo "No viewer groups to process"
-  else
-    echo "Adding viewer role to LDAP groups in $teamName"
+    # Loop through each group
+    echo "$groupViewers" | jq -c '.[]' | while read i; do
+        echo "Add 'viewer' role to existing LDAP group $i"
+    done
   fi
+  echo ""
 }
 
-function createTeam() { # $1 = teamName $2=roleId $3=roleName $4=users
-  echo "Creating $1"
-  curl -ks --location "https://$keycloakApiEndpoint/groups" \
-  --header "Content-Type: application/json" \
-  --header "Authorization: Bearer $keycloakAccessToken" \
-  --data "{
-    \"name\": \"$1\",
-    \"attributes\": {
-        \"integration.ibm.com/migrated\": [true],
-        \"integration.ibm.com/namespaces\": $teamNamespaces
-    }
-}"
-  getGroupId "$1"
-  if [ -z "$groupId" ]
+function checkForLdapConnections {
+  ldapConnections="$(curl -ks "https://$cpConsole/idmgmt/identity/api/v1/directory/ldap/list" \
+  --header "Authorization: Bearer $csAccessToken")"
+  # Check we have not got an error
+  if [[ $ldapConnections == Error* ]]
   then
-    echo "Unable to find group id for $1. Users and roles will not be added..."
-  else
-    addRoleToGroup "$2" "$3" "$groupId"
-    addUsersToGroup "$groupId" "$4"
-    echo ""
-  fi
-
-}
-
-# If the client ID is the same as the name, we don't need to do this!
-function getClientId {
-  cp4iClientId="$(curl -ks --location "https://$keycloakApiEndpoint/clients" \
-    --header "Authorization: Bearer $keycloakAccessToken" \
-   | jq -r ". | map(select(.name == \"$keycloakClientName\")) | .[].id")"
-
-  if [ -z "$cp4iClientId" ]
-  then
-        echo ""
-        echo "Unable to find $keycloakClientName in realm $keycloakRealm, exiting..."
-        exit 1
-  fi
-}
-
-function getGroupId() { # $1 = group name
-  groupId="$(curl -ks --location "https://$keycloakApiEndpoint/groups" \
-    --header "Authorization: Bearer $keycloakAccessToken" \
-    | jq -r ". | map(select(.name == \"$1\")) | .[].id")"
-
-  if [ -z "$groupId" ]
-  then
-        echo ""
-        echo "Unable to find ID for group ( in realm $keycloakRealm, exiting..."
-        exit 1
-  fi
-}
-
-function getClientRoleIds {
-  cp4iRoles="$(curl -ks --location "https://$keycloakApiEndpoint/clients/$cp4iClientId/roles" \
-    --header "Authorization: Bearer $keycloakAccessToken")"
-
-  # Does the above API call fail?
-
-  cp4iAdminRoleUid="$(echo $cp4iRoles | jq -r ". | map(select(.name == \"administrator\")) | .[].id")"
-  cp4iEditorRoleUid="$(echo $cp4iRoles | jq -r ". | map(select(.name == \"editor\")) | .[].id")"
-  cp4iViewerRoleUid="$(echo $cp4iRoles | jq -r ". | map(select(.name == \"viewer\")) | .[].id")"
-
-  if [ -z "$cp4iAdminRoleUid" ]
-  then
-    echo ""
-    echo "Unable to find administrator role in client $keycloakClientName, exiting..."
-    exit 1
-  fi
-  if [ -z "$cp4iEditorRoleUid" ]
-  then
-    echo ""
-    echo "Unable to find editor role in client $keycloakClientName, exiting..."
-    exit 1
-  fi
-  if [ -z "$cp4iViewerRoleUid" ]
-  then
-    echo ""
-    echo "Unable to find viewer role in client $keycloakClientName, exiting..."
-    exit 1
-  fi
-}
-
-function addRoleToGroup() { # $1=roleId $2=roleName $3=groupId
-  curl -ks --location "https://$keycloakApiEndpoint/groups/$3/role-mappings/clients/$cp4iClientId" \
-  --header "Content-Type: application/json" \
-  --header "Authorization: Bearer $keycloakAccessToken" \
-  --data "[
-      {
-        \"id\": \"$1\",
-        \"name\": \"$2\"
-      }
-  ]"
-}
-
-function processLdapGroups() { # $1 = groups $2 = roleId $3 = roleName
-  echo "$1" | jq -r '.[]' | while read i; do
-    getGroupId "$i"
-    if [ -z "$groupId" ]
-    then
       echo ""
-      echo "Unable to group $i, ignoring import..."
+      echo "An error occurred checking SAML connections, Exiting..."
+      exit 1
+  fi
+}
+
+function checkForSamlConnections {
+  # https://www.ibm.com/docs/en/cloud-paks/foundational-services/3.23?topic=apis-identity-provider#saml-uid-idpv3
+  samlConnections="$(curl -ks "https://$cpConsole/idprovider/v3/auth/idsource?protocol=saml" \
+  --header "Authorization: Bearer $csAccessToken")"
+
+  # Check we have not got an error
+  if [[ $samlConnections == Error* ]]
+  then
       echo ""
-    else
-      addRoleToGroup "$cp4iAdminRoleUid" "administrator" "$groupId" "$cp4iClientId"
-      addAttributesToGroup "$groupId" "{ \"integration.ibm.com/migrated\": [true], \"integration.ibm.com/namespaces\": $teamNamespaces }"
-    fi
-  done
+      echo "An error occurred checking SAML connections, Exiting..."
+      exit 1
+  fi
 }
 
-function addUsersToGroup() { # $1= groupId, $2= users
-  echo "$2" | jq -r '.[]' | while read i; do
-    searchResults="$(curl -ks --location "https://$keycloakApiEndpoint/users?search=$i" \
-      --header "Authorization: Bearer $keycloakAccessToken")"
-    
-    # Does the above API call fail?
-    
-    searchCount="$(echo "$searchResults" | jq -r length)"
-    
-    if [[ "$searchCount" -eq "1" ]]; 
-    then
-      userId="$(echo "$searchResults" | jq -r '.[].id')"
-      curl -ks --location --request PUT "https://$keycloakApiEndpoint/users/$userId/groups/$1" \
-      --header "Content-Type: application/json" \
-      --header "Authorization: Bearer $keycloakAccessToken"
-    else
-      echo "Unable to onboard user $i"
-    fi
-  done
+function checkForOidcConnections {
+  # https://www.ibm.com/docs/en/cloud-paks/foundational-services/3.23?topic=apis-identity-provider#saml-uid-idpv3
+  oidcConnections="$(curl -ks "https://$cpConsole/idprovider/v3/auth/idsource?protocol=oidc" \
+  --header "Authorization: Bearer $csAccessToken")"
+  
+  # Check we have not got an error
+  if [[ $oidcConnections == Error* ]]
+  then
+      echo ""
+      echo "An error occurred checking OIDC connections, Exiting..."
+      exit 1
+  fi
 }
 
-function addAttributesToGroup() { #$1= groupId $2=attributes
-  groupMetaData="$(curl -ks --location "https://$keycloakApiEndpoint/groups/$1" \
-    --header "Authorization: Bearer $keycloakAccessToken")"
+function inspectIdpConnections {
+  ldapCount="$(echo "$ldapConnections" | jq -r length)"
+  samlCount="$(echo "$samlConnections" | jq -r '.idp | length')"
+  oidcCount="$(echo "$oidcConnections" | jq -r '.idp | length')"
   
-  # Does the above API call fail?
-  
-  groupMetaDataWithAttributes="$(echo $groupMetaData | jq -r ".attributes += $2")"
+  if [[ "$ldapCount" -gt "0" ]]; 
+  then
+    echo "LDAP connections to migrate"
+    echo "==========================="
+    echo "$ldapConnections" | jq -c '.[]' | while read i; do
+      ldapConnection=$i
+      ldapName="$(echo $ldapConnection | jq -r .LDAP_ID)"
+      ldapUrl="$(echo $ldapConnection | jq -r .LDAP_URL)"
+      echo "$ldapName - $ldapUrl"
+    done
+  fi
 
-  curl -ks --location --request PUT "https://$keycloakApiEndpoint/groups/$1" \
-  --header "Content-Type: application/json" \
-  --header "Authorization: Bearer $keycloakAccessToken" \
-  --data "$groupMetaDataWithAttributes"
+  if [[ "$samlCount" -gt "0" ]]; 
+  then
+    echo "SAML connections to migrate"
+    echo "==========================="
+    echo "$samlConnections" | jq -c '.idp[]' | while read i; do
+      samlConnection=$i
+      samlName="$(echo $samlConnection | jq -r .name)"
+      echo "$samlName"
+    done
+  fi
+
+  if [[ "$oidcCount" -gt "0" ]]; 
+  then
+    echo "OIDC connections to migrate"
+    echo "==========================="
+    echo "$oidcConnections" | jq -c '.idp[]' | while read i; do
+      oidcConnection=$i
+      oidcName="$(echo $oidcConnection | jq -r .name)"
+      oidcUrl="$(echo $oidcConnection | jq -r .idp_config.discovery_url)"
+      echo "$oidcName - $oidcUrl"
+    done
+  fi
+}
+
+function inspectTeams {
+  echo "$csTeams" | jq -c '.[]' | while read i; do
+      processTeam "$i"
+  done
 }
 
 ### End Functions
 
 ### MAIN ###
-
-echo "Starting IAM to keycloak migration..."
 
 # Make sure we are oc logged in
 echo ""
@@ -346,7 +249,6 @@ fi
 
 # Check we have jq installed!!
 
-
 # Get cp-console url and admin cred secret
 echo ""
 echo "Getting cp4i information..."
@@ -357,7 +259,6 @@ cp4iName="$(oc get platformnavigators -n $cp4iNamespace -o jsonpath='{.items[0].
 # Get CP console route
 cpConsole="$(oc get route -n $commonServicesNamespace cp-console -o jsonpath="{.spec.host}")"
 
-
 # Secrets Names
 idpCredentialsSecretName="ibm-iam-bindinfo-platform-auth-idp-credentials"
 oidcSecretName="$cp4iName-ibm-inte-3c22-oidc-client"
@@ -366,21 +267,38 @@ oidcSecretName="$cp4iName-ibm-inte-3c22-oidc-client"
 idpCredentialsData="$(oc get secret $idpCredentialsSecretName -n $cp4iNamespace -o json | jq -r .data)"
 oidcSecretData="$(oc get secret $oidcSecretName -n $cp4iNamespace -o json | jq -r .data)"
 
-cpAdminUserName="$(echo "$idpCredentialsData" | jq -r .admin_username | base64 -D)"
-cpAdminUserPass="$(echo "$idpCredentialsData" | jq -r .admin_password | base64 -D)"
-cp4iClientId="$(echo "$oicsSecretData" | jq -r .CLIENT_ID | base64 -D)"
-cp4iClientSecret="$(echo "$oicsSecretData" | jq -r .CLIENT_SECRET | base64 -D)"
-
-# Check if keycloak is installed...otherwise we cannot continue
+cpAdminUserName="$(echo "$idpCredentialsData" | jq -r .admin_username | base64 -d)"
+cpAdminUserPass="$(echo "$idpCredentialsData" | jq -r .admin_password | base64 -d)"
+cp4iClientId="$(echo "$oicsSecretData" | jq -r .CLIENT_ID | base64 -d)"
+cp4iClientSecret="$(echo "$oicsSecretData" | jq -r .CLIENT_SECRET | base64 -d)"
 
 getCsAccessToken
 
+echo ""
+echo "Starting IAM migration helper script..."
+echo ""
+
+# Check what LDAPs and IDPs we have, SAML too?
+
+echo "Checking connections to Common services"
+checkForLdapConnections
+checkForSamlConnections
+checkForOidcConnections
+
+# Check what teams we have set up
 getCsTeams
 
-# Log out how many teams we have found?!?
+echo ""
+echo "Generating helper output..."
+echo ""
 
-echo "$csTeams" | jq -c '.[]' | while read i; do
-    processTeam $i
-done
+# First logout the connections
+inspectIdpConnections
 
-echo "Finished IAM to keycloak migration"
+# Inspect all teams with users and groups
+# explain what needs to be done in keycloak
+inspectTeams
+# if we find groups, we need to point out that you need to add the LDAP mapper in keycloak !!
+
+echo ""
+echo "Finished IAM migration helper script"
