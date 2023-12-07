@@ -116,7 +116,10 @@ function processAdmins {
     echo "$groupAdmins" | jq -r '.[]' | while read i; do
         groupName="$i"
         roleAdded=" "
-        checkIfGroupRoleAndUsersMigrated "false"
+        if [[ "$checkAgainstKeycloak" == "true" ]]
+        then
+          checkIfGroupRoleAndUsersMigrated "false"
+        fi
         echo "[$roleAdded] Add $groupRole role to existing LDAP group $i"
     done
   fi
@@ -154,7 +157,10 @@ function processViewers {
     echo "$groupViewers" | jq -r '.[]' | while read i; do
         groupName="$i"
         roleAdded=" "
-        checkIfGroupRoleAndUsersMigrated "false"
+        if [[ "$checkAgainstKeycloak" == "true" ]]
+        then
+          checkIfGroupRoleAndUsersMigrated "false"
+        fi
         echo "[$roleAdded] Add $groupRole role to existing LDAP group $i"
     done
   fi
