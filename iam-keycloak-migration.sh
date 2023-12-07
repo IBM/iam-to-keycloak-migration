@@ -105,7 +105,7 @@ function processAdmins {
     fi
     echo "[$groupCreated] Create a group in the $keycloakCloudPakRealm realm called $groupName"
     echo "[$usersAdded] Add users $users to $groupName group"
-    echo "[$roleAdded] Add $groupRole role to $groupName group"
+    echo "[$roleAdded] Add $groupRole role (from $cp4iKeycloakClientId) to $groupName group"
   fi
 
   # process groups
@@ -120,7 +120,7 @@ function processAdmins {
         then
           checkIfGroupRoleAndUsersMigrated "false"
         fi
-        echo "[$roleAdded] Add $groupRole role to existing LDAP group $i"
+        echo "[$roleAdded] Add $groupRole role (from $cp4iKeycloakClientId) to existing LDAP group $i"
     done
   fi
   echo ""
@@ -146,7 +146,7 @@ function processViewers {
     fi
     echo "[$groupCreated] Create a group in the $keycloakCloudPakRealm realm called $groupName"
     echo "[$usersAdded] Add users $users to $groupName group"
-    echo "[$roleAdded] Add $groupRole role to $groupName group"
+    echo "[$roleAdded] Add $groupRole role (from $cp4iKeycloakClientId) to $groupName group"
   fi
 
   # process groups
@@ -161,7 +161,7 @@ function processViewers {
         then
           checkIfGroupRoleAndUsersMigrated "false"
         fi
-        echo "[$roleAdded] Add $groupRole role to existing LDAP group $i"
+        echo "[$roleAdded] Add $groupRole role (from $cp4iKeycloakClientId)  to existing LDAP group $i"
     done
   fi
   echo ""
