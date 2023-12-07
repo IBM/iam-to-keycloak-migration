@@ -64,13 +64,11 @@ function processTeam() {
         echo "$teamName team"
         echo "================"
 
-        getTeamUsers "$team" # sets teamAdmins, teamEditors, teamViewers
-        getTeamGroups "$team" # sets groupAdmins, groupEditors, groupViewers
+        getTeamUsers "$team" # sets teamAdmins, teamViewers
+        getTeamGroups "$team" # sets groupAdmins, groupViewers
 
         # Need to tell the user to add a mapper in keycloak to pick up these groups
-        
         processAdmins
-        processEditors
         processViewers
     fi
 }
@@ -80,27 +78,34 @@ function getTeamUsers() {
     # echo "Getting filtered lists of admin, editor and viewer users"
 
     teamAdmins="$(echo $1 | jq -r ".users | map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:Administrator\")) | map(.userId)")" # Need to consider CloudPak admin etc
-    teamEditors="$(echo $1 | jq -r ".users | map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:Editor\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Operator\")) | map(.userId)")"
-    teamViewers="$(echo $1 | jq -r ".users | map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:Viewer\")) | map(.userId)")"
+    teamViewers="$(echo $1 | jq -r ".users | map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:Editor\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Operator\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Viewer\")) | map(.userId)")"
 }
 
 function getTeamGroups() {
     # echo ""
     # echo "Getting filtered lists of admin, editor and viewer users"
     groupAdmins="$(echo $1 | jq -r ".usergroups | map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:Administrator\")) | map(.name)")" # TODO - Need to consider CloudPak admin etc
-    groupEditors="$(echo $1 | jq -r ".usergroups | map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:Editor\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Operator\")) | map(.name)")"
-    groupViewers="$(echo $1 | jq -r ".usergroups | map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:Viewer\")) | map(.name)")"
+    groupViewers="$(echo $1 | jq -r ".usergroups | map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:Editor\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Operator\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Viewer\")) | map(.name)")"
 }
 
 function processAdmins {
   # process users first
   userCount="$(echo "$teamAdmins" | jq -r length)"
+  groupName="$teamName-admins"
+  groupRole="admin"
   if [[ "$userCount" -gt "0" ]]; 
   then
     users=$(echo "$teamAdmins" | jq -r '. | join(", ")')
-    echo "[ ] Create a group in the $keycloakCloudPakRealm realm called '$teamName-admins'"
-    echo "[ ] Add users $users to '$teamName-admins' group"
-    echo "[ ] Add 'admin' role to '$teamName-admins' group"
+    groupCreated=" "
+    usersAdded=" "
+    roleAdded=" "
+    if [[ "$checkAgainstKeycloak" == "true" ]]
+    then
+      checkIfGroupRoleAndUsersMigrated "true" "$teamAdmins"
+    fi
+    echo "[$groupCreated] Create a group in the $keycloakCloudPakRealm realm called $groupName"
+    echo "[$usersAdded] Add users $users to $groupName group"
+    echo "[$roleAdded] Add $groupRole role to $groupName group"
   fi
 
   # process groups
@@ -108,31 +113,11 @@ function processAdmins {
   if [[ "$groupCount" -gt "0" ]]; 
   then
     # Loop through each group
-    echo "$groupAdmins" | jq -c '.[]' | while read i; do
-        echo "[ ] Add 'admin' role to existing LDAP group $i"
-    done
-  fi
-  echo ""
-}
-
-function processEditors {
-  # process users first
-  userCount="$(echo "$teamEditors" | jq -r length)"
-  if [[ "$userCount" -gt "0" ]]; 
-  then
-    users=$(echo "$teamEditors" | jq -r '. | join(", ")')
-    echo "[ ] Create a group in the $keycloakCloudPakRealm realm called '$teamName-editors'"
-    echo "[ ] Add users $users to '$teamName-editors' group"
-    echo "[ ] Add 'editor' role to '$teamName-editors' group"
-  fi
-
-  # process groups
-  groupCount="$(echo "$groupEditors" | jq -r length)"
-  if [[ "$groupCount" -gt "0" ]]; 
-  then
-    # Loop through each group
-    echo "$groupEditors" | jq -c '.[]' | while read i; do
-        echo "[ ] Add 'editor' role to existing LDAP group $i"
+    echo "$groupAdmins" | jq -r '.[]' | while read i; do
+        groupName="$i"
+        roleAdded=" "
+        checkIfGroupRoleAndUsersMigrated "false"
+        echo "[$roleAdded] Add $groupRole role to existing LDAP group $i"
     done
   fi
   echo ""
@@ -141,12 +126,24 @@ function processEditors {
 function processViewers {
   # process users first
   userCount="$(echo "$teamViewers" | jq -r length)"
+  users=$(echo "$teamViewers" | jq -r '. | join(", ")')
+  groupName="$teamName-viewers"
+  groupRole="viewer"
   if [[ "$userCount" -gt "0" ]]; 
   then
-    users=$(echo "$teamViewers" | jq -r '. | join(", ")')
-    echo "[ ] Create a group in the $keycloakCloudPakRealm realm called '$teamName-viewers'"
-    echo "[ ] Add users $users to '$teamName-viewers' group"
-    echo "[ ] Add 'viewer' role to '$teamName-viewers' group"
+    groupCreated=" "
+    usersAdded=" "
+    roleAdded=" "
+    if [[ "$checkAgainstKeycloak" == "true" ]]
+    then
+      checkIfGroupRoleAndUsersMigrated "true" "$teamViewers"
+
+      # Have the users been added to the group?
+
+    fi
+    echo "[$groupCreated] Create a group in the $keycloakCloudPakRealm realm called $groupName"
+    echo "[$usersAdded] Add users $users to $groupName group"
+    echo "[$roleAdded] Add $groupRole role to $groupName group"
   fi
 
   # process groups
@@ -154,8 +151,11 @@ function processViewers {
   if [[ "$groupCount" -gt "0" ]]; 
   then
     # Loop through each group
-    echo "$groupViewers" | jq -c '.[]' | while read i; do
-        echo "[ ] Add 'viewer' role to existing LDAP group $i"
+    echo "$groupViewers" | jq -r '.[]' | while read i; do
+        groupName="$i"
+        roleAdded=" "
+        checkIfGroupRoleAndUsersMigrated "false"
+        echo "[$roleAdded] Add $groupRole role to existing LDAP group $i"
     done
   fi
   echo ""
@@ -212,7 +212,7 @@ function getKeycloakLdapConnections {
   --header "Authorization: Bearer $keycloakAccessToken")"
 
   # Check we have not got an error
-  hasError="$(echo $keycloakLdapConnections | jq 'has("error")')"
+  hasError="$(echo $keycloakLdapConnections | jq 'if type=="array" then false else has("error") end')"
   if [ "$hasError" == "true" ]
   then
       echo ""
@@ -283,6 +283,80 @@ function inspectIdpConnections {
   fi
 }
 
+function getKeycloakGroup() {
+  keycloakGroups="$(curl -ks "https://$keycloakUrl/admin/realms/$keycloakCloudPakRealm/ui-ext/groups?search=$1&exact=true" \
+  --header "Authorization: Bearer $keycloakAccessToken")"
+
+  # Check we have not got an error
+  hasError="$(echo $keycloakGroups | jq 'if type=="array" then false else has("error") end')"
+  if [ "$hasError" == "true" ]
+  then
+      echo ""
+      echo "An error occurred getting groups in keycloak, Exiting..."
+      exit 1
+  fi
+}
+
+function getMembersFromGroup() {
+    keycloakGroupMembers="$(curl -ks "https://$keycloakUrl/admin/realms/$keycloakCloudPakRealm/groups/$1/members" \
+  --header "Authorization: Bearer $keycloakAccessToken")"
+
+  # Check we have not got an error
+  hasError="$(echo $keycloakGroupMembers | jq 'if type=="array" then false else has("error") end')"
+  if [ "$hasError" == "true" ]
+  then
+      echo ""
+      echo "An error occurred getting members for group $1 in keycloak, Exiting..."
+      exit 1
+  else
+    keycloakGroupMembers="$(echo $keycloakGroupMembers | jq -r "map(.username)")"
+  fi
+}
+
+function checkIfGroupRoleAndUsersMigrated() {
+  getMembers="$1"
+  groupMembers="$2"
+  # Has the group been created?
+  getKeycloakGroup "$groupName"
+  groupFound="$(echo $keycloakGroups | jq -r length)"
+
+  # Put into a function?
+  if [[ "$groupFound" -eq "1" ]]
+  then
+    groupCreated="x"
+    # Has the role been added to the group?
+    # Check if we can see our client id under clientRoles, then check if the array contains the role
+    hasRolesFromClient="$(echo $keycloakGroups | jq -r ".[0].clientRoles | has(\"$cp4iKeycloakClientId\")")"
+    if [[ "$hasRolesFromClient" == "true" ]]
+    then
+      roles="$(echo $keycloakGroups | jq -r ".[0].clientRoles[\"$cp4iKeycloakClientId\"]")"
+      containsRole="$(echo $roles | jq -r ".[] | contains(\"$groupRole\")")"
+      if [[ "$containsRole" == "true" ]]
+      then
+        roleAdded="x"
+      fi
+    fi
+    if [[ "$getMembers" == "true" ]]
+    then
+      # Check if users have been added
+      groupId="$(echo $keycloakGroups | jq -r ".[0].id")"
+      getMembersFromGroup "$groupId"
+
+      # Have any members been added to the team?
+      memberCount=$(echo $keycloakGroupMembers | jq -r length)
+      if [[ "$memberCount" -gt "0" ]]
+      then
+        # Have all users been added?
+        allUsersAdded="$(jq --null-input "$keycloakGroupMembers - $groupMembers" | jq -r length)"
+        if [[ "$allUsersAdded" -eq "0" ]]
+        then
+          usersAdded="x"
+        fi
+      fi
+    fi
+  fi
+}
+
 ### End Functions
 
 ### MAIN ###
@@ -309,13 +383,25 @@ cp4iName="$(oc get platformnavigators -n $cp4iNamespace -o jsonpath='{.items[0].
 # Get routes
 cpConsole="$(oc get route -n $commonServicesNamespace cp-console -o jsonpath="{.spec.host}")"
 
+
+keycloakUrl=""
+cp4iKeycloakClientId=""
+
 if [[ "$checkAgainstKeycloak" == "true" ]]
 then
+  # Get the keycloak url
   keycloakUrl="$(oc get route -n $commonServicesNamespace keycloak -o jsonpath="{.spec.host}")"
+  # Get the name of the keycloak client
+  cp4iKeycloakClientId="$(oc get platformnavigators -n $cp4iNamespace -o jsonpath='{.items[0].status.metadata.integrationKeycloak.clientName}')"
 
   if [[ -z "$keycloakUrl" ]]
   then
     echo "Unable to find keycloak in $commonServicesNamespace namespace. Exiting..."
+    exit 1
+  fi
+  if [[ -z "$cp4iKeycloakClientId" ]]
+  then
+    echo "Unable to find client id for CP4I in keycloak in $cp4iNamespace namespace. Exiting..."
     exit 1
   fi
 fi
