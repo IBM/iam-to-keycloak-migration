@@ -345,7 +345,7 @@ function checkIfGroupRoleAndUsersMigrated() {
       if [[ "$memberCount" -gt "0" ]]
       then
         # Have all users been added?
-        allUsersAdded="$(jq --null-input "$keycloakGroupMembers - $groupMembers" | jq -r length)"
+        allUsersAdded="$(jq --null-input "$groupMembers - $keycloakGroupMembers" | jq -r length)"
         if [[ "$allUsersAdded" -eq "0" ]]
         then
           usersAdded="x"
