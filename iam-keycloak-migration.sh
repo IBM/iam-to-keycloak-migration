@@ -70,14 +70,17 @@ function processTeam() {
     fi
 }
 
+adminsQuery="map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:ClusterAdministrator\" or .roles[].id == \"crn:v1:icp:private:iam::::role:CloudPakAdministrator\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Administrator\""
+viewersQuery="map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:Editor\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Operator\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Viewer\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Auditor\""
+
 function getTeamUsers() {
-    teamAdmins="$(echo $1 | jq -r ".users | map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:Administrator\")) | map(.userId)")" # Need to consider CloudPak admin etc
-    teamViewers="$(echo $1 | jq -r ".users | map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:Editor\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Operator\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Viewer\")) | map(.userId)")"
+    teamAdmins="$(echo $1 | jq -r ".users | $adminsQuery)) | map(.userId)")"
+    teamViewers="$(echo $1 | jq -r ".users | $viewersQuery)) | map(.userId)")"
 }
 
 function getTeamGroups() {
-    groupAdmins="$(echo $1 | jq -r ".usergroups | map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:Administrator\")) | map(.name)")" # TODO - Need to consider CloudPak admin etc
-    groupViewers="$(echo $1 | jq -r ".usergroups | map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:Editor\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Operator\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Viewer\")) | map(.name)")"
+    groupAdmins="$(echo $1 | jq -r ".usergroups | $adminsQuery)) | map(.name)")"
+    groupViewers="$(echo $1 | jq -r ".usergroups | $viewersQuery)) | map(.name)")"
 }
 
 function processAdmins {
@@ -266,7 +269,7 @@ function inspectIdpConnections {
   # Maybe we don't bother with this as it's a BETA?!?
   if [[ "$oidcCount" -gt "0" ]]; 
   then
-    # TODO - Check SAML connection in Keycloak
+    # TODO - Check OIDC connection in Keycloak
     echo "OIDC connections"
     echo "================"
     echo "$oidcConnections" | jq -c '.idp[]' | while read i; do
