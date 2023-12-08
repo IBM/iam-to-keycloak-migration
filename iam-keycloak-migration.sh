@@ -1,9 +1,6 @@
 #!/bin/bash
 
-# Params check, what is the cp4i namespace?
-cp4iNamespace="${cp4iNamespace:-navigator-ns}"
-commonServicesNamespace="${commonServicesNamespace:-ibm-common-services}"
-
+# Consts
 keycloakRealm="master"
 keycloakCloudPakRealm="cloudpak"
 checkAgainstKeycloak="true"
@@ -74,16 +71,11 @@ function processTeam() {
 }
 
 function getTeamUsers() {
-    # echo ""
-    # echo "Getting filtered lists of admin, editor and viewer users"
-
     teamAdmins="$(echo $1 | jq -r ".users | map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:Administrator\")) | map(.userId)")" # Need to consider CloudPak admin etc
     teamViewers="$(echo $1 | jq -r ".users | map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:Editor\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Operator\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Viewer\")) | map(.userId)")"
 }
 
 function getTeamGroups() {
-    # echo ""
-    # echo "Getting filtered lists of admin, editor and viewer users"
     groupAdmins="$(echo $1 | jq -r ".usergroups | map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:Administrator\")) | map(.name)")" # TODO - Need to consider CloudPak admin etc
     groupViewers="$(echo $1 | jq -r ".usergroups | map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:Editor\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Operator\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Viewer\")) | map(.name)")"
 }
@@ -104,8 +96,8 @@ function processAdmins {
       checkIfGroupRoleAndUsersMigrated "true" "$teamAdmins"
     fi
     echo "[$groupCreated] Create a group in the $keycloakCloudPakRealm realm called $groupName"
-    echo "[$usersAdded] Add users $users to $groupName group"
-    echo "[$roleAdded] Add $groupRole role (from $cp4iKeycloakClientId) to $groupName group"
+    echo "[$usersAdded] Add user/s $users to $groupName group"
+    echo "[$roleAdded] Assign $groupRole role mapping (from $cp4iKeycloakClientId) to $groupName group"
   fi
 
   # process groups
@@ -120,7 +112,7 @@ function processAdmins {
         then
           checkIfGroupRoleAndUsersMigrated "false"
         fi
-        echo "[$roleAdded] Add $groupRole role (from $cp4iKeycloakClientId) to existing LDAP group $i"
+        echo "[$roleAdded] Assign $groupRole role mapping (from $cp4iKeycloakClientId) to existing LDAP group $i"
     done
   fi
   echo ""
@@ -140,13 +132,10 @@ function processViewers {
     if [[ "$checkAgainstKeycloak" == "true" ]]
     then
       checkIfGroupRoleAndUsersMigrated "true" "$teamViewers"
-
-      # Have the users been added to the group?
-
     fi
     echo "[$groupCreated] Create a group in the $keycloakCloudPakRealm realm called $groupName"
-    echo "[$usersAdded] Add users $users to $groupName group"
-    echo "[$roleAdded] Add $groupRole role (from $cp4iKeycloakClientId) to $groupName group"
+    echo "[$usersAdded] Add user/s $users to $groupName group"
+    echo "[$roleAdded] Assign $groupRole role mapping (from $cp4iKeycloakClientId) to $groupName group"
   fi
 
   # process groups
@@ -161,7 +150,7 @@ function processViewers {
         then
           checkIfGroupRoleAndUsersMigrated "false"
         fi
-        echo "[$roleAdded] Add $groupRole role (from $cp4iKeycloakClientId)  to existing LDAP group $i"
+        echo "[$roleAdded] Assign $groupRole role mapping (from $cp4iKeycloakClientId) to existing LDAP group $i"
     done
   fi
   echo ""
@@ -367,6 +356,20 @@ function checkIfGroupRoleAndUsersMigrated() {
 
 ### MAIN ###
 
+# Usage ./iam-keycloak-migration.sh <cp4i namespace> optional: <common services namespace>
+if [ -z "$1" ]
+  then
+    echo ""
+    echo "ERROR: Platform navigator namespace not supplied"
+    echo "       Usage ./iam-keycloak-migration.sh <cp4i namespace> optional: <common services namespace>"
+    echo ""
+    exit 1
+fi
+
+cp4iNamespace="$1"
+commonServicesNamespace="$2"
+commonServicesNamespace="${commonServicesNamespace:-ibm-common-services}"
+
 # Make sure we are oc logged in
 echo ""
 echo "Checking we are logging into a cluster..."
@@ -377,7 +380,8 @@ then
   exit 1
 fi
 
-# Check we have jq installed!!
+# Check jq is installed
+if [ ! -x "$(command -v jq)" ]; then echo "You need jq: https://jqlang.github.io/jq/download"; exit 1; fi
 
 # Get cp-console url and admin cred secret
 echo ""
@@ -386,9 +390,20 @@ echo "Getting cp4i information..."
 # Get name of the PN
 cp4iName="$(oc get platformnavigators -n $cp4iNamespace -o jsonpath='{.items[0].metadata.name}')"
 
+if [[ -z "$cp4iName" ]]
+then
+    echo "Unable to the platform navigator in the $cp4iNamespace namespace, Exiting..."
+    exit 1
+fi
+
 # Get routes
 cpConsole="$(oc get route -n $commonServicesNamespace cp-console -o jsonpath="{.spec.host}")"
 
+if [[ -z "$cpConsole" ]]
+then
+    echo "Unable to the find the cp-console route in the $commonServicesNamespace namespace, Exiting..."
+    exit 1
+fi
 
 keycloakUrl=""
 cp4iKeycloakClientId=""
@@ -421,6 +436,7 @@ keycloakAdminSecretName="cs-keycloak-initial-admin"
 idpCredentialsData="$(oc get secret $idpCredentialsSecretName -n $cp4iNamespace -o json | jq -r .data)"
 oidcSecretData="$(oc get secret $oidcSecretName -n $cp4iNamespace -o json | jq -r .data)"
 
+# Credentials
 cpAdminUserName="$(echo "$idpCredentialsData" | jq -r .admin_username | base64 -d)"
 cpAdminUserPass="$(echo "$idpCredentialsData" | jq -r .admin_password | base64 -d)"
 cp4iClientId="$(echo "$oicsSecretData" | jq -r .CLIENT_ID | base64 -d)"
@@ -439,7 +455,7 @@ echo ""
 echo "Starting IAM migration helper script..."
 echo ""
 
-# Check what LDAPs and IDPs we have, SAML too?
+# Check what LDAPs and IDPs we have
 
 echo "Checking connections to Common services"
 checkForLdapConnections
@@ -450,7 +466,7 @@ checkForOidcConnections
 getCsTeams
 
 echo ""
-echo "Generating helper output..."
+echo "Generating checklist..."
 echo ""
 
 # First logout the connections
@@ -459,6 +475,5 @@ inspectIdpConnections
 # Inspect all teams with users and groups
 # explain what needs to be done in keycloak
 inspectTeams
-# if we find groups, we need to point out that you need to add the LDAP mapper in keycloak !!
 
 echo "Finished IAM migration helper script"
