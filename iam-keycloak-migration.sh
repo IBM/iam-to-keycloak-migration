@@ -1,5 +1,37 @@
 #!/bin/bash
 
+set -o errexit
+set -o nounset
+set -o pipefail
+set -o errtrace
+
+function usage() {
+    if [ ! -z "${1:-}" ]; then
+        echo "${1}" > /dev/stderr
+        echo "" > /dev/stderr
+    fi
+    echo """$0
+
+Migration tool for moving from IBM Cloud Pak foundational services Identity and Access Management (IAM) to Red Hat build of Keycloak (RHBK) provided as a service using IBM Cloud Pak foundational services.
+
+Dependencies:
+    oc
+    jq
+
+Usage:
+    $0 [common services namespace] [cp4i namespace]
+
+Parameters:
+    common services namespace
+        The namespace for common services. This namespace is used to identify configuration that needs to be migrated. Defaults to ibm-common-services.
+
+    cp4i namespace
+        The namespace for your CP4I installation. This namespace is used to validate that migration tasks have been completed. If this namespace is not specified, migration tasks will not be verified.
+    """ > /dev/stderr
+
+    exit 1
+}
+
 # Consts
 keycloakRealm="master"
 keycloakCloudPakRealm="cloudpak"
@@ -15,8 +47,6 @@ function getCsAccessToken {
     --data-urlencode "username=$cpAdminUserName" \
     --data-urlencode "password=$cpAdminUserPass" \
     --data-urlencode "scope=openid" \
-    --data-urlencode "client_id=$cp4iClientId" \
-    --data-urlencode "client_secret=$cp4iClientSecret" \
     --data-urlencode "grant_type=password" \
     | jq -r .access_token)"
 }
@@ -24,7 +54,7 @@ function getCsAccessToken {
 function getKeycloakcsAccessToken {
     echo ""
     echo "Generating Keycloak access token..."
-   keycloakAccessToken="$(curl -ks --location "https://$keycloakUrl/realms/master/protocol/openid-connect/token" \
+    keycloakAccessToken="$(curl -ks --location "https://$keycloakUrl/realms/master/protocol/openid-connect/token" \
     --header "Content-Type: application/x-www-form-urlencoded" \
     --data-urlencode "password=$keycloakAdminPass" \
     --data-urlencode "username=admin" \
@@ -401,19 +431,15 @@ function checkIfGroupRoleAndUsersMigrated() {
 
 ### MAIN ###
 
-# Usage ./iam-keycloak-migration.sh <cp4i namespace> optional: <common services namespace>
-if [ -z "$1" ]
-  then
-    echo ""
-    echo "ERROR: Platform navigator namespace not supplied"
-    echo "       Usage ./iam-keycloak-migration.sh <cp4i namespace> optional: <common services namespace>"
-    echo ""
-    exit 1
+commonServicesNamespace="${1-ibm-common-services}"
+cp4iNamespace="${2-}"
+
+if [ -z "${cp4iNamespace}" ]; then
+    checkAgainstKeycloak="false"
 fi
 
-cp4iNamespace="$1"
-commonServicesNamespace="$2"
-commonServicesNamespace="${commonServicesNamespace:-ibm-common-services}"
+if [ ! -x "$(command -v oc)" ]; then echo "You need the OpenShift CLI tool, oc"; exit 1; fi
+if [ ! -x "$(command -v jq)" ]; then echo "You need jq: https://jqlang.github.io/jq/download"; exit 1; fi
 
 # Make sure we are oc logged in
 echo ""
@@ -425,24 +451,12 @@ then
   exit 1
 fi
 
-# Check jq is installed
-if [ ! -x "$(command -v jq)" ]; then echo "You need jq: https://jqlang.github.io/jq/download"; exit 1; fi
-
 # Get cp-console url and admin cred secret
 echo ""
-echo "Getting cp4i information..."
-
-# Get name of the PN
-cp4iName="$(oc get platformnavigators -n $cp4iNamespace -o jsonpath='{.items[0].metadata.name}')"
-
-if [[ -z "$cp4iName" ]]
-then
-    echo "Unable to the platform navigator in the $cp4iNamespace namespace, Exiting..."
-    exit 1
-fi
+echo "Getting login information from the cluster..."
 
 # Get routes
-cpConsole="$(oc get route -n $commonServicesNamespace cp-console -o jsonpath="{.spec.host}")"
+cpConsole="$(oc get route -n "$commonServicesNamespace" cp-console -o jsonpath="{.spec.host}")"
 
 if [[ -z "$cpConsole" ]]
 then
@@ -455,14 +469,16 @@ cp4iKeycloakClientId=""
 
 if [[ "$checkAgainstKeycloak" == "true" ]]
 then
+  servicesNamespace="$(oc get commonservice.operator.ibm.com common-service -n cp4i -o jsonpath="{.spec.servicesNamespace}")"
   # Get the keycloak url
-  keycloakUrl="$(oc get route -n $commonServicesNamespace keycloak -o jsonpath="{.spec.host}")"
+  keycloakUrl="$(oc get route -n "$servicesNamespace" keycloak -o jsonpath="{.spec.host}")"
   # Get the name of the keycloak client
-  cp4iKeycloakClientId="$(oc get platformnavigators -n $cp4iNamespace -o jsonpath='{.items[0].status.metadata.integrationKeycloak.clientName}')"
+  # TODO: Which namespace is used for the IntegrationKeycloakClient in cluster scoped installs?
+  cp4iKeycloakClientId="$(oc get integrationkeycloakclient.keycloak.integration.ibm.com -l app.kubernetes.io/name=ibm-integration-platform-navigator -n "$cp4iNamespace" -o jsonpath='{.items[0].spec.client.clientId}')"
 
   if [[ -z "$keycloakUrl" ]]
   then
-    echo "Unable to find keycloak in $commonServicesNamespace namespace. Exiting..."
+    echo "Unable to find keycloak in $servicesNamespace namespace. Exiting..."
     exit 1
   fi
   if [[ -z "$cp4iKeycloakClientId" ]]
@@ -473,25 +489,22 @@ then
 fi
 
 # Secrets Names
-idpCredentialsSecretName="ibm-iam-bindinfo-platform-auth-idp-credentials"
-oidcSecretName="$cp4iName-ibm-inte-3c22-oidc-client"
+idpCredentialsSecretName="platform-auth-idp-credentials"
 keycloakAdminSecretName="cs-keycloak-initial-admin"
 
 # Secrets data
-idpCredentialsData="$(oc get secret $idpCredentialsSecretName -n $cp4iNamespace -o json | jq -r .data)"
-oidcSecretData="$(oc get secret $oidcSecretName -n $cp4iNamespace -o json | jq -r .data)"
+idpCredentialsData="$(oc get secret "$idpCredentialsSecretName" -n "$commonServicesNamespace" -o json | jq -r .data)"
 
 # Credentials
 cpAdminUserName="$(echo "$idpCredentialsData" | jq -r .admin_username | base64 -d)"
 cpAdminUserPass="$(echo "$idpCredentialsData" | jq -r .admin_password | base64 -d)"
-cp4iClientId="$(echo "$oicsSecretData" | jq -r .CLIENT_ID | base64 -d)"
-cp4iClientSecret="$(echo "$oicsSecretData" | jq -r .CLIENT_SECRET | base64 -d)"
 
 getCsAccessToken
 
 if [[ "$checkAgainstKeycloak" == "true" ]]
 then
-  keycloakSecretData="$(oc get secret $keycloakAdminSecretName -n $commonServicesNamespace -o json | jq -r .data)"
+  # TODO: Does CS make the admin secret password in the services namespace for cluster scoped installs?
+  keycloakSecretData="$(oc get secret "$keycloakAdminSecretName" -n "$servicesNamespace" -o json | jq -r .data)"
   keycloakAdminPass="$(echo "$keycloakSecretData" | jq -r .password | base64 -d)"
   getKeycloakcsAccessToken
 fi
