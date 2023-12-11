@@ -64,9 +64,20 @@ function processTeam() {
         getTeamUsers "$team" # sets teamAdmins, teamViewers
         getTeamGroups "$team" # sets groupAdmins, groupViewers
 
-        # Need to tell the user to add a mapper in keycloak to pick up these groups
-        processAdmins
-        processViewers
+        teamAdminsCount="$(echo "$teamAdmins" | jq -r length)"
+        teamViewersCount="$(echo "$teamViewers" | jq -r length)"
+        groupAdminsCount="$(echo "$groupAdmins" | jq -r length)"
+        groupViewersCount="$(echo "$groupViewers" | jq -r length)"
+
+        if [[ "$teamAdminsCount" -eq "0" ]] && [[ "$teamViewersCount" -eq "0" ]] && [[ "$groupAdminsCount" -eq "0" ]] && [[ "$groupViewersCount" -eq "0" ]];
+        then
+          # Nothing to do for this team
+          echo "[x] No users or groups to migrate"
+        else
+          # Need to tell the user to add a mapper in keycloak to pick up these groups
+          processAdmins
+          processViewers
+        fi
     fi
 }
 
@@ -219,11 +230,25 @@ function getKeycloakLdapConnections {
   fi
 }
 
+function getKeycloakSamlConnections {
+  keycloakSamlConnections="$(curl -ks "https://$keycloakUrl/admin/realms/$keycloakCloudPakRealm/identity-provider/instances" \
+  --header "Authorization: Bearer $keycloakAccessToken")"
+
+  # Check we have not got an error
+  hasError="$(echo $keycloakSamlConnections | jq 'if type=="array" then false else has("error") end')"
+  if [ "$hasError" == "true" ]
+  then
+      echo ""
+      echo "An error occurred checking SAML connections in keycloak, Exiting..."
+      exit 1
+  fi
+}
+
 function inspectIdpConnections {
   ldapCount="$(echo "$ldapConnections" | jq -r length)"
   samlCount="$(echo "$samlConnections" | jq -r '.idp | length')"
   oidcCount="$(echo "$oidcConnections" | jq -r '.idp | length')"
-  
+
   if [[ "$ldapCount" -gt "0" ]]; 
   then
     if [[ "$checkAgainstKeycloak" == "true" ]]
@@ -241,7 +266,7 @@ function inspectIdpConnections {
 
       if [[ "$checkAgainstKeycloak" == "true" ]]
       then
-        # Check if we the LDAP connection is added to keycloak
+        # Check if the LDAP connection is added to keycloak
         ldapsFound="$(echo $keycloakLdapConnections | jq -r ". | map(select(.name == \"$ldapName\"))")"
         ldapCount="$(echo "$ldapsFound" | jq -r length)"
         if [[ "$ldapCount" -eq "1" ]]
@@ -256,13 +281,30 @@ function inspectIdpConnections {
 
   if [[ "$samlCount" -gt "0" ]]; 
   then
-    # TODO - Check SAML connection in Keycloak
+    if [[ "$checkAgainstKeycloak" == "true" ]]
+    then
+      # Check if the SAML connection has been migrated
+      getKeycloakSamlConnections
+    fi
+
     echo "SAML connections"
     echo "================"
     echo "$samlConnections" | jq -c '.idp[]' | while read i; do
       samlConnection=$i
       samlName="$(echo $samlConnection | jq -r .name)"
-      echo "[ ] Migrate $samlName"
+      migrated=" "
+
+      if [[ "$checkAgainstKeycloak" == "true" ]]
+      then
+        # Check if the SAML connection is added to keycloak
+        samlsFound="$(echo $keycloakSamlConnections | jq -r ". | map(select(.alias == \"$samlName\"))")"
+        samlCount="$(echo "$samlsFound" | jq -r length)"
+        if [[ "$samlCount" -eq "1" ]]
+        then
+          migrated="x"
+        fi
+      fi
+      echo "[$migrated] Migrate $samlName"
     done
   fi
 
