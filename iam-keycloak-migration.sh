@@ -19,14 +19,15 @@ Dependencies:
     jq
 
 Usage:
-    $0 [common services namespace] [cp4i namespace]
+    $0 <namespace>
 
 Parameters:
-    common services namespace
-        The namespace for common services. This namespace is used to identify configuration that needs to be migrated. Defaults to ibm-common-services.
+    namespace
+        The namespace of your CP4I installation.
 
-    cp4i namespace
-        The namespace for your CP4I installation. This namespace is used to validate that migration tasks have been completed. If this namespace is not specified, migration tasks will not be verified.
+Environment Variables:
+    IAM_NAMESPACE
+        Override the IAM namespace
     """ > /dev/stderr
 
     exit 1
@@ -431,12 +432,15 @@ function checkIfGroupRoleAndUsersMigrated() {
 
 ### MAIN ###
 
-commonServicesNamespace="${1-ibm-common-services}"
-cp4iNamespace="${2-}"
+## Check parameters and environment
 
-if [ -z "${cp4iNamespace}" ]; then
-    checkAgainstKeycloak="false"
+if [ -z "${1-}" ]; then
+    usage "ERROR: No namespace specified"
+    exit 1
 fi
+
+namespace="${1}"
+iamNamespace="${IAM_NAMESPACE:-${namespace}}"
 
 if [ ! -x "$(command -v oc)" ]; then echo "You need the OpenShift CLI tool, oc"; exit 1; fi
 if [ ! -x "$(command -v jq)" ]; then echo "You need jq: https://jqlang.github.io/jq/download"; exit 1; fi
@@ -455,57 +459,33 @@ fi
 echo ""
 echo "Getting login information from the cluster..."
 
-# Get routes
-cpConsole="$(oc get route -n "$commonServicesNamespace" cp-console -o jsonpath="{.spec.host}")"
+## Get a CPFS IAM token
 
-if [[ -z "$cpConsole" ]]
-then
-    echo "Unable to the find the cp-console route in the $commonServicesNamespace namespace, Exiting..."
-    exit 1
-fi
+# We can use the IAM bind info because until we have finished migrating, IAM will still be installed.
 
-keycloakUrl=""
-cp4iKeycloakClientId=""
-
-if [[ "$checkAgainstKeycloak" == "true" ]]
-then
-  servicesNamespace="$(oc get commonservice.operator.ibm.com common-service -n cp4i -o jsonpath="{.spec.servicesNamespace}")"
-  # Get the keycloak url
-  keycloakUrl="$(oc get route -n "$servicesNamespace" keycloak -o jsonpath="{.spec.host}")"
-  # Get the name of the keycloak client
-  # TODO: Which namespace is used for the IntegrationKeycloakClient in cluster scoped installs?
-  cp4iKeycloakClientId="$(oc get integrationkeycloakclient.keycloak.integration.ibm.com -l app.kubernetes.io/name=ibm-integration-platform-navigator -n "$cp4iNamespace" -o jsonpath='{.items[0].spec.client.clientId}')"
-
-  if [[ -z "$keycloakUrl" ]]
-  then
-    echo "Unable to find keycloak in $servicesNamespace namespace. Exiting..."
-    exit 1
-  fi
-  if [[ -z "$cp4iKeycloakClientId" ]]
-  then
-    echo "Unable to find client id for CP4I in keycloak in $cp4iNamespace namespace. Exiting..."
-    exit 1
-  fi
-fi
-
-# Secrets Names
-idpCredentialsSecretName="platform-auth-idp-credentials"
-keycloakAdminSecretName="cs-keycloak-initial-admin"
-
-# Secrets data
-idpCredentialsData="$(oc get secret "$idpCredentialsSecretName" -n "$commonServicesNamespace" -o json | jq -r .data)"
-
-# Credentials
-cpAdminUserName="$(echo "$idpCredentialsData" | jq -r .admin_username | base64 -d)"
-cpAdminUserPass="$(echo "$idpCredentialsData" | jq -r .admin_password | base64 -d)"
+idpCredentialsSecretName="ibm-iam-bindinfo-platform-auth-idp-credentials"
+cpConsole="$(oc get configmap -n "${iamNamespace}" ibm-iam-bindinfo-oauth-client-map -o jsonpath="{.data.CLUSTER_CA_DOMAIN}")"
+cpAdminUserName="$(oc get secret -n "${iamNamespace}" "$idpCredentialsSecretName" -o jsonpath="{.data.admin_username}" | base64 -d)"
+cpAdminUserPass="$(oc get secret -n "${iamNamespace}" "$idpCredentialsSecretName" -o jsonpath="{.data.admin_password}" | base64 -d)"
 
 getCsAccessToken
 
 if [[ "$checkAgainstKeycloak" == "true" ]]
 then
-  # TODO: Does CS make the admin secret password in the services namespace for cluster scoped installs?
-  keycloakSecretData="$(oc get secret "$keycloakAdminSecretName" -n "$servicesNamespace" -o json | jq -r .data)"
-  keycloakAdminPass="$(echo "$keycloakSecretData" | jq -r .password | base64 -d)"
+  # Logic for services namespace:
+  # - If cp4i is cluster scoped, CommonService in openshift-operators
+  # - If cp4i is namespace scoped, CommonService in namespace
+  # We can try the namespace, and if its not there, fry openshift-operators
+  servicesNamespace="$(oc get commonservice.operator.ibm.com common-service -n "${namespace}" -o jsonpath="{.spec.servicesNamespace}" 2> /dev/null || oc get commonservice.operator.ibm.com common-service -n openshift-operators -o jsonpath="{.spec.servicesNamespace}")"
+
+  # Get the keycloak url
+  keycloakUrl="$(oc get route -n "$servicesNamespace" keycloak -o jsonpath="{.spec.host}")"
+  # Get the name of the keycloak client
+  cp4iKeycloakClientId="$(oc get integrationkeycloakclient.keycloak.integration.ibm.com -l app.kubernetes.io/name=ibm-integration-platform-navigator -n "$servicesNamespace" -o jsonpath='{.items[0].spec.client.clientId}')"
+
+  keycloakAdminSecretName="cs-keycloak-initial-admin"
+  keycloakAdminPass="$(oc get secret "$keycloakAdminSecretName" -n "$servicesNamespace" -o jsonpath="{.data.password}" | base64 -d)"
+
   getKeycloakcsAccessToken
 fi
 
