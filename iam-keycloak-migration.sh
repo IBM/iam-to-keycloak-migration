@@ -35,6 +35,12 @@ Environment Variables:
     exit 1
 }
 
+function fatal ()
+{
+    echo "FATAL: $@" > /dev/stderr
+    exit 1
+}
+
 function debug ()
 {
     if [[ -n "${DEBUG+x}" ]]; then
@@ -448,14 +454,13 @@ if [ -z "${1-}" ]; then
 fi
 
 namespace="${1}"
-iamNamespace="${IAM_NAMESPACE:-${namespace}}"
 
 if [ ! -x "$(command -v oc)" ]; then echo "You need the OpenShift CLI tool, oc"; exit 1; fi
 if [ ! -x "$(command -v jq)" ]; then echo "You need jq: https://jqlang.github.io/jq/download"; exit 1; fi
 
 # Make sure we are oc logged in
 echo ""
-echo "Checking we are logging into a cluster..."
+echo "Checking we are logged into a cluster..."
 if ! oc whoami > /dev/null
 then
   echo "You must be oc logged in before continuing. Exiting..."
@@ -468,9 +473,25 @@ echo "Getting login information from the cluster..."
 
 ## Get a CPFS IAM token
 
-# We can use the IAM bind info because until we have finished migrating, IAM will still be installed.
-idpCredentialsSecretName="ibm-iam-bindinfo-platform-auth-idp-credentials"
-cpConsole="$(oc get configmap -n "${iamNamespace}" ibm-iam-bindinfo-oauth-client-map -o jsonpath="{.data.CLUSTER_CA_DOMAIN}")"
+# Work out what namespace IAM is in
+iamNamespace="${IAM_NAMESPACE:-}"
+if [ -z "$iamNamespace" ]; then
+  # Logic for IAM namespace:
+  # - If cp4i used an isolated bedrock 3, IAM is in namespace
+  # - If cp4i used a cluster scoped bedrock 3, IAM is likely to be in ibm-common-services
+  # Try the cp4i namespace, and if its not there, try ibm-common-services
+  if oc get route cp-console -n "${namespace}" > /dev/null 2>&1; then
+    iamNamespace="${namespace}"
+  elif oc get route cp-console -n ibm-common-services > /dev/null 2>&1; then
+    iamNamespace=ibm-common-services
+  else
+    fatal "Could not find cp-console route in either the ${namespace} or ibm-common-services namespace. Set the IAM_NAMESPACE environment variable to use a custom namespace."
+  fi
+fi
+
+# Get login details
+idpCredentialsSecretName="platform-auth-idp-credentials"
+cpConsole="$(oc get route -n "${iamNamespace}" cp-console -o jsonpath="{.spec.host}")"
 cpAdminUserName="$(oc get secret -n "${iamNamespace}" "$idpCredentialsSecretName" -o jsonpath="{.data.admin_username}" | base64 -d)"
 cpAdminUserPass="$(oc get secret -n "${iamNamespace}" "$idpCredentialsSecretName" -o jsonpath="{.data.admin_password}" | base64 -d)"
 
@@ -478,13 +499,20 @@ getCsAccessToken
 
 if [[ "$checkAgainstKeycloak" == "true" ]]
 then
-  # Logic for services namespace:
-  # - If cp4i is cluster scoped, CommonService in openshift-operators
-  # - If cp4i is namespace scoped, CommonService in namespace
-  # We can try the namespace, and if its not there, fry openshift-operators
   servicesNamespace="${KEYCLOAK_NAMESPACE:-}"
   if [ -z "$servicesNamespace" ]; then
-    servicesNamespace="$(oc get commonservice.operator.ibm.com common-service -n "${namespace}" -o jsonpath="{.spec.servicesNamespace}" 2> /dev/null || oc get commonservice.operator.ibm.com common-service -n openshift-operators -o jsonpath="{.spec.servicesNamespace}")"
+    # Logic for services namespace:
+    # - If cp4i is cluster scoped, CommonService in openshift-operators
+    # - If cp4i is namespace scoped, CommonService in namespace
+    # Try the namespace, and if its not there, try openshift-operators
+    if oc get commonservice.operator.ibm.com common-service -n "${namespace}" > /dev/null 2>&1; then
+      csOperatorNamespace="${namespace}"
+    elif oc get commonservice.operator.ibm.com common-service -n openshift-operators > /dev/null 2>&1; then
+      csOperatorNamespace=openshift-operators
+    else
+      fatal "Could not find CommonService resource in either the ${namespace} or openshift-operators namespace. Set the KEYCLOAK_NAMESPACE environment variable to use a custom namespace."
+    fi
+    servicesNamespace="$(oc get commonservice.operator.ibm.com common-service -n "${csOperatorNamespace}" -o jsonpath="{.spec.servicesNamespace}")"
   fi
 
   # Get the keycloak url
