@@ -37,7 +37,7 @@ Environment Variables:
 
 function fatal ()
 {
-    echo "FATAL: $@" > /dev/stderr
+    echo "FATAL: $*" > /dev/stderr
     exit 1
 }
 
