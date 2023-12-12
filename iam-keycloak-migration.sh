@@ -7,7 +7,7 @@ set -o errtrace
 
 function usage() {
     if [ ! -z "${1:-}" ]; then
-        echo "${1}" > /dev/stderr
+        echo "$@" > /dev/stderr
         echo "" > /dev/stderr
     fi
     echo """$0
@@ -27,10 +27,19 @@ Parameters:
 
 Environment Variables:
     IAM_NAMESPACE
-        Override the IAM namespace
+        Override the IAM namespace instead of automatically detecting it.
+    KEYCLOAK_NAMESPACE
+        Override the Keycloak namespace instead of automatically detecting it.
     """ > /dev/stderr
 
     exit 1
+}
+
+function debug ()
+{
+    if [[ ! -z "${DEBUG+x}" ]]; then
+        echo "$@" > /dev/stderr
+    fi
 }
 
 # Consts
@@ -462,7 +471,6 @@ echo "Getting login information from the cluster..."
 ## Get a CPFS IAM token
 
 # We can use the IAM bind info because until we have finished migrating, IAM will still be installed.
-
 idpCredentialsSecretName="ibm-iam-bindinfo-platform-auth-idp-credentials"
 cpConsole="$(oc get configmap -n "${iamNamespace}" ibm-iam-bindinfo-oauth-client-map -o jsonpath="{.data.CLUSTER_CA_DOMAIN}")"
 cpAdminUserName="$(oc get secret -n "${iamNamespace}" "$idpCredentialsSecretName" -o jsonpath="{.data.admin_username}" | base64 -d)"
@@ -476,7 +484,10 @@ then
   # - If cp4i is cluster scoped, CommonService in openshift-operators
   # - If cp4i is namespace scoped, CommonService in namespace
   # We can try the namespace, and if its not there, fry openshift-operators
-  servicesNamespace="$(oc get commonservice.operator.ibm.com common-service -n "${namespace}" -o jsonpath="{.spec.servicesNamespace}" 2> /dev/null || oc get commonservice.operator.ibm.com common-service -n openshift-operators -o jsonpath="{.spec.servicesNamespace}")"
+  servicesNamespace="${KEYCLOAK_NAMESPACE:-}"
+  if [ -z "$servicesNamespace" ]; then
+    servicesNamespace="$(oc get commonservice.operator.ibm.com common-service -n "${namespace}" -o jsonpath="{.spec.servicesNamespace}" 2> /dev/null || oc get commonservice.operator.ibm.com common-service -n openshift-operators -o jsonpath="{.spec.servicesNamespace}")"
+  fi
 
   # Get the keycloak url
   keycloakUrl="$(oc get route -n "$servicesNamespace" keycloak -o jsonpath="{.spec.host}")"
