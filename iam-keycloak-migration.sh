@@ -6,11 +6,11 @@ set -o pipefail
 set -o errtrace
 
 function usage() {
-    if [ ! -z "${1:-}" ]; then
+    if [ -n "${1:-}" ]; then
         echo "$@" > /dev/stderr
         echo "" > /dev/stderr
     fi
-    echo """$0
+    echo "$0
 
 Migration tool for moving from IBM Cloud Pak foundational services Identity and Access Management (IAM) to Red Hat build of Keycloak (RHBK) provided as a service using IBM Cloud Pak foundational services.
 
@@ -30,14 +30,14 @@ Environment Variables:
         Override the IAM namespace instead of automatically detecting it.
     KEYCLOAK_NAMESPACE
         Override the Keycloak namespace instead of automatically detecting it.
-    """ > /dev/stderr
+" > /dev/stderr
 
     exit 1
 }
 
 function debug ()
 {
-    if [[ ! -z "${DEBUG+x}" ]]; then
+    if [[ -n "${DEBUG+x}" ]]; then
         echo "$@" > /dev/stderr
     fi
 }
@@ -64,7 +64,7 @@ function getCsAccessToken {
 function getKeycloakcsAccessToken {
     echo ""
     echo "Generating Keycloak access token..."
-    keycloakAccessToken="$(curl -ks --location "https://$keycloakUrl/realms/master/protocol/openid-connect/token" \
+    keycloakAccessToken="$(curl -ks --location "https://$keycloakUrl/realms/$keycloakRealm/protocol/openid-connect/token" \
     --header "Content-Type: application/x-www-form-urlencoded" \
     --data-urlencode "password=$keycloakAdminPass" \
     --data-urlencode "username=admin" \
@@ -125,13 +125,13 @@ adminsQuery="map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:ClusterA
 viewersQuery="map(select(.roles[].id == \"crn:v1:icp:private:iam::::role:Editor\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Operator\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Viewer\" or .roles[].id == \"crn:v1:icp:private:iam::::role:Auditor\""
 
 function getTeamUsers() {
-    teamAdmins="$(echo $1 | jq -r ".users | $adminsQuery)) | map(.userId)")"
-    teamViewers="$(echo $1 | jq -r ".users | $viewersQuery)) | map(.userId)")"
+    teamAdmins="$(echo "$1" | jq -r ".users | $adminsQuery)) | map(.userId)")"
+    teamViewers="$(echo "$1" | jq -r ".users | $viewersQuery)) | map(.userId)")"
 }
 
 function getTeamGroups() {
-    groupAdmins="$(echo $1 | jq -r ".usergroups | $adminsQuery)) | map(.name)")"
-    groupViewers="$(echo $1 | jq -r ".usergroups | $viewersQuery)) | map(.name)")"
+    groupAdmins="$(echo "$1" | jq -r ".usergroups | $adminsQuery)) | map(.name)")"
+    groupViewers="$(echo "$1" | jq -r ".usergroups | $viewersQuery)) | map(.name)")"
 }
 
 function processAdmins {
@@ -159,7 +159,7 @@ function processAdmins {
   if [[ "$groupCount" -gt "0" ]]; 
   then
     # Loop through each group
-    echo "$groupAdmins" | jq -r '.[]' | while read i; do
+    echo "$groupAdmins" | jq -r '.[]' | while read -r i; do
         groupName="$i"
         roleAdded=" "
         if [[ "$checkAgainstKeycloak" == "true" ]]
@@ -197,7 +197,7 @@ function processViewers {
   if [[ "$groupCount" -gt "0" ]]; 
   then
     # Loop through each group
-    echo "$groupViewers" | jq -r '.[]' | while read i; do
+    echo "$groupViewers" | jq -r '.[]' | while read -r i; do
         groupName="$i"
         roleAdded=" "
         if [[ "$checkAgainstKeycloak" == "true" ]]
@@ -211,7 +211,7 @@ function processViewers {
 }
 
 function inspectTeams {
-  echo "$csTeams" | jq -c '.[]' | while read i; do
+  echo "$csTeams" | jq -c '.[]' | while read -r i; do
       processTeam "$i"
   done
 }
@@ -261,7 +261,7 @@ function getKeycloakLdapConnections {
   --header "Authorization: Bearer $keycloakAccessToken")"
 
   # Check we have not got an error
-  hasError="$(echo $keycloakLdapConnections | jq 'if type=="array" then false else has("error") end')"
+  hasError="$(echo "$keycloakLdapConnections" | jq 'if type=="array" then false else has("error") end')"
   if [ "$hasError" == "true" ]
   then
       echo ""
@@ -275,7 +275,7 @@ function getKeycloakSamlConnections {
   --header "Authorization: Bearer $keycloakAccessToken")"
 
   # Check we have not got an error
-  hasError="$(echo $keycloakSamlConnections | jq 'if type=="array" then false else has("error") end')"
+  hasError="$(echo "$keycloakSamlConnections" | jq 'if type=="array" then false else has("error") end')"
   if [ "$hasError" == "true" ]
   then
       echo ""
@@ -298,16 +298,16 @@ function inspectIdpConnections {
     
     echo "LDAP connections"
     echo "================"
-    echo "$ldapConnections" | jq -c '.[]' | while read i; do
+    echo "$ldapConnections" | jq -c '.[]' | while read -r i; do
       ldapConnection=$i
-      ldapName="$(echo $ldapConnection | jq -r .LDAP_ID)"
-      ldapUrl="$(echo $ldapConnection | jq -r .LDAP_URL)"
+      ldapName="$(echo "$ldapConnection" | jq -r .LDAP_ID)"
+      ldapUrl="$(echo "$ldapConnection" | jq -r .LDAP_URL)"
       migrated=" "
 
       if [[ "$checkAgainstKeycloak" == "true" ]]
       then
         # Check if the LDAP connection is added to keycloak
-        ldapsFound="$(echo $keycloakLdapConnections | jq -r ". | map(select(.name == \"$ldapName\"))")"
+        ldapsFound="$(echo "$keycloakLdapConnections" | jq -r ". | map(select(.name == \"$ldapName\"))")"
         ldapCount="$(echo "$ldapsFound" | jq -r length)"
         if [[ "$ldapCount" -eq "1" ]]
         then
@@ -329,15 +329,15 @@ function inspectIdpConnections {
 
     echo "SAML connections"
     echo "================"
-    echo "$samlConnections" | jq -c '.idp[]' | while read i; do
+    echo "$samlConnections" | jq -c '.idp[]' | while read -r i; do
       samlConnection=$i
-      samlName="$(echo $samlConnection | jq -r .name)"
+      samlName="$(echo "$samlConnection" | jq -r .name)"
       migrated=" "
 
       if [[ "$checkAgainstKeycloak" == "true" ]]
       then
         # Check if the SAML connection is added to keycloak
-        samlsFound="$(echo $keycloakSamlConnections | jq -r ". | map(select(.alias == \"$samlName\"))")"
+        samlsFound="$(echo "$keycloakSamlConnections" | jq -r ". | map(select(.alias == \"$samlName\"))")"
         samlCount="$(echo "$samlsFound" | jq -r length)"
         if [[ "$samlCount" -eq "1" ]]
         then
@@ -354,10 +354,10 @@ function inspectIdpConnections {
     # TODO - Check OIDC connection in Keycloak
     echo "OIDC connections"
     echo "================"
-    echo "$oidcConnections" | jq -c '.idp[]' | while read i; do
+    echo "$oidcConnections" | jq -c '.idp[]' | while read -r i; do
       oidcConnection=$i
-      oidcName="$(echo $oidcConnection | jq -r .name)"
-      oidcUrl="$(echo $oidcConnection | jq -r .idp_config.discovery_url)"
+      oidcName="$(echo "$oidcConnection" | jq -r .name)"
+      oidcUrl="$(echo "$oidcConnection" | jq -r .idp_config.discovery_url)"
       echo "[ ] Migrate $oidcName - $oidcUrl"
     done
   fi
@@ -368,7 +368,7 @@ function getKeycloakGroup() {
   --header "Authorization: Bearer $keycloakAccessToken")"
 
   # Check we have not got an error
-  hasError="$(echo $keycloakGroups | jq 'if type=="array" then false else has("error") end')"
+  hasError="$(echo "$keycloakGroups" | jq 'if type=="array" then false else has("error") end')"
   if [ "$hasError" == "true" ]
   then
       echo ""
@@ -382,14 +382,14 @@ function getMembersFromGroup() {
   --header "Authorization: Bearer $keycloakAccessToken")"
 
   # Check we have not got an error
-  hasError="$(echo $keycloakGroupMembers | jq 'if type=="array" then false else has("error") end')"
+  hasError="$(echo "$keycloakGroupMembers" | jq 'if type=="array" then false else has("error") end')"
   if [ "$hasError" == "true" ]
   then
       echo ""
       echo "An error occurred getting members for group $1 in keycloak, Exiting..."
       exit 1
   else
-    keycloakGroupMembers="$(echo $keycloakGroupMembers | jq -r "map(.username)")"
+    keycloakGroupMembers="$(echo "$keycloakGroupMembers" | jq -r "map(.username)")"
   fi
 }
 
@@ -398,7 +398,7 @@ function checkIfGroupRoleAndUsersMigrated() {
   groupMembers="$2"
   # Has the group been created?
   getKeycloakGroup "$groupName"
-  groupFound="$(echo $keycloakGroups | jq -r length)"
+  groupFound="$(echo "$keycloakGroups" | jq -r length)"
 
   # Put into a function?
   if [[ "$groupFound" -eq "1" ]]
@@ -406,11 +406,11 @@ function checkIfGroupRoleAndUsersMigrated() {
     groupCreated="x"
     # Has the role been added to the group?
     # Check if we can see our client id under clientRoles, then check if the array contains the role
-    hasRolesFromClient="$(echo $keycloakGroups | jq -r ".[0].clientRoles | has(\"$cp4iKeycloakClientId\")")"
+    hasRolesFromClient="$(echo "$keycloakGroups" | jq -r ".[0].clientRoles | has(\"$cp4iKeycloakClientId\")")"
     if [[ "$hasRolesFromClient" == "true" ]]
     then
-      roles="$(echo $keycloakGroups | jq -r ".[0].clientRoles[\"$cp4iKeycloakClientId\"]")"
-      containsRole="$(echo $roles | jq -r ".[] | contains(\"$groupRole\")")"
+      roles="$(echo "$keycloakGroups" | jq -r ".[0].clientRoles[\"$cp4iKeycloakClientId\"]")"
+      containsRole="$(echo "$roles" | jq -r ".[] | contains(\"$groupRole\")")"
       if [[ "$containsRole" == "true" ]]
       then
         roleAdded="x"
@@ -419,11 +419,11 @@ function checkIfGroupRoleAndUsersMigrated() {
     if [[ "$getMembers" == "true" ]]
     then
       # Check if users have been added
-      groupId="$(echo $keycloakGroups | jq -r ".[0].id")"
+      groupId="$(echo "$keycloakGroups" | jq -r ".[0].id")"
       getMembersFromGroup "$groupId"
 
       # Have any members been added to the team?
-      memberCount=$(echo $keycloakGroupMembers | jq -r length)
+      memberCount=$(echo "$keycloakGroupMembers" | jq -r length)
       if [[ "$memberCount" -gt "0" ]]
       then
         # Have all users been added?
@@ -445,7 +445,6 @@ function checkIfGroupRoleAndUsersMigrated() {
 
 if [ -z "${1-}" ]; then
     usage "ERROR: No namespace specified"
-    exit 1
 fi
 
 namespace="${1}"
@@ -457,8 +456,7 @@ if [ ! -x "$(command -v jq)" ]; then echo "You need jq: https://jqlang.github.io
 # Make sure we are oc logged in
 echo ""
 echo "Checking we are logging into a cluster..."
-currentUser=$(oc whoami)
-if [ $? -eq 1 ]
+if ! oc whoami > /dev/null
 then
   echo "You must be oc logged in before continuing. Exiting..."
   exit 1
