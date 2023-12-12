@@ -18,5 +18,5 @@ For more information on user management within IBM Cloud Pak for Integration, se
 1. Run the migration tool. The tool will not make any changes to your system, it will only list the changes that need to be made and verify if they have been made.
 
    ```
-   ./iam-keycloak-migration.sh
+   ./iam-keycloak-migration.sh <cp4i namespace>
    ```
