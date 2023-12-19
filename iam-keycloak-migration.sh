@@ -24,6 +24,8 @@ Usage:
 Parameters:
     namespace
         The namespace of your CP4I installation.
+    -d <directory>
+        Directory to store temporary files
 
 Environment Variables:
     IAM_NAMESPACE
@@ -52,6 +54,12 @@ function debug ()
 keycloakRealm="master"
 keycloakCloudPakRealm="cloudpak"
 checkAgainstKeycloak="true"
+
+csLdapConnections="csLdapConnections.json"
+csSamlConnections="csSamlConnections.json"
+csOidcConnections="csOidcConnections.json"
+keycloakLdapConnections="keycloakLdapConnections.json"
+keycloakIdpConnections="keycloakIdpConnections.json"
 
 ### Functions
 # Get an access token
@@ -223,25 +231,24 @@ function inspectTeams {
 }
 
 function checkForLdapConnections {
-  ldapConnections="$(curl -ks "https://$cpConsole/idmgmt/identity/api/v1/directory/ldap/list" \
-  --header "Authorization: Bearer $csAccessToken")"
+  # https://www.ibm.com/docs/en/cloud-paks/foundational-services/3.23?topic=apis-directory-management#list
+  curl -ks "https://$cpConsole/idmgmt/identity/api/v1/directory/ldap/list" \
+       --header "Authorization: Bearer $csAccessToken" > "$datadir/$csLdapConnections"
   # Check we have not got an error
-  if [[ $ldapConnections == Error* ]]
-  then
+  if grep ^Error "$datadir/$csLdapConnections" > /dev/null 2>&1; then
       echo ""
-      echo "An error occurred checking SAML connections, Exiting..."
+      echo "An error occurred checking LDAP connections, Exiting..."
       exit 1
   fi
 }
 
 function checkForSamlConnections {
   # https://www.ibm.com/docs/en/cloud-paks/foundational-services/3.23?topic=apis-identity-provider#saml-uid-idpv3
-  samlConnections="$(curl -ks "https://$cpConsole/idprovider/v3/auth/idsource?protocol=saml" \
-  --header "Authorization: Bearer $csAccessToken")"
+  curl -ks "https://$cpConsole/idprovider/v3/auth/idsource?protocol=saml" \
+       --header "Authorization: Bearer $csAccessToken" > "$datadir/$csSamlConnections"
 
   # Check we have not got an error
-  if [[ $samlConnections == Error* ]]
-  then
+  if grep ^Error "$datadir/$csSamlConnections" > /dev/null 2>&1; then
       echo ""
       echo "An error occurred checking SAML connections, Exiting..."
       exit 1
@@ -250,12 +257,11 @@ function checkForSamlConnections {
 
 function checkForOidcConnections {
   # https://www.ibm.com/docs/en/cloud-paks/foundational-services/3.23?topic=apis-identity-provider#saml-uid-idpv3
-  oidcConnections="$(curl -ks "https://$cpConsole/idprovider/v3/auth/idsource?protocol=oidc" \
-  --header "Authorization: Bearer $csAccessToken")"
-  
+  curl -ks "https://$cpConsole/idprovider/v3/auth/idsource?protocol=oidc" \
+       --header "Authorization: Bearer $csAccessToken" > "$datadir/$csOidcConnections"
+
   # Check we have not got an error
-  if [[ $oidcConnections == Error* ]]
-  then
+  if grep ^Error "$datadir/$csOidcConnections" > /dev/null 2>&1; then
       echo ""
       echo "An error occurred checking OIDC connections, Exiting..."
       exit 1
@@ -263,11 +269,11 @@ function checkForOidcConnections {
 }
 
 function getKeycloakLdapConnections {
-  keycloakLdapConnections="$(curl -ks "https://$keycloakUrl/admin/realms/$keycloakCloudPakRealm/components?type=org.keycloak.storage.UserStorageProvider" \
-  --header "Authorization: Bearer $keycloakAccessToken")"
+  curl -ks "https://$keycloakUrl/admin/realms/$keycloakCloudPakRealm/components?type=org.keycloak.storage.UserStorageProvider" \
+       --header "Authorization: Bearer $keycloakAccessToken" > "$datadir/$keycloakLdapConnections"
 
   # Check we have not got an error
-  hasError="$(echo "$keycloakLdapConnections" | jq 'if type=="array" then false else has("error") end')"
+  hasError="$(jq 'if type=="array" then false else has("error") end' "$datadir/$keycloakLdapConnections")"
   if [ "$hasError" == "true" ]
   then
       echo ""
@@ -276,12 +282,12 @@ function getKeycloakLdapConnections {
   fi
 }
 
-function getKeycloakSamlConnections {
-  keycloakSamlConnections="$(curl -ks "https://$keycloakUrl/admin/realms/$keycloakCloudPakRealm/identity-provider/instances" \
-  --header "Authorization: Bearer $keycloakAccessToken")"
+function getKeycloakIdpConnections {
+  curl -ks "https://$keycloakUrl/admin/realms/$keycloakCloudPakRealm/identity-provider/instances" \
+       --header "Authorization: Bearer $keycloakAccessToken" > "$datadir/$keycloakIdpConnections"
 
   # Check we have not got an error
-  hasError="$(echo "$keycloakSamlConnections" | jq 'if type=="array" then false else has("error") end')"
+  hasError="$(jq 'if type=="array" then false else has("error") end' "$datadir/$keycloakIdpConnections")"
   if [ "$hasError" == "true" ]
   then
       echo ""
@@ -291,9 +297,9 @@ function getKeycloakSamlConnections {
 }
 
 function inspectIdpConnections {
-  ldapCount="$(echo "$ldapConnections" | jq -r length)"
-  samlCount="$(echo "$samlConnections" | jq -r '.idp | length')"
-  oidcCount="$(echo "$oidcConnections" | jq -r '.idp | length')"
+  ldapCount="$(jq -r length "$datadir/$csLdapConnections")"
+  samlCount="$(jq -r '.idp | length' "$datadir/$csSamlConnections")"
+  oidcCount="$(jq -r '.idp | length' "$datadir/$csOidcConnections")"
 
   if [[ "$ldapCount" -gt "0" ]]; 
   then
@@ -304,7 +310,7 @@ function inspectIdpConnections {
     
     echo "LDAP connections"
     echo "================"
-    echo "$ldapConnections" | jq -c '.[]' | while read -r i; do
+    jq -c '.[]' "$datadir/$csLdapConnections" | while read -r i; do
       ldapConnection=$i
       ldapName="$(echo "$ldapConnection" | jq -r .LDAP_ID)"
       ldapUrl="$(echo "$ldapConnection" | jq -r .LDAP_URL)"
@@ -313,7 +319,7 @@ function inspectIdpConnections {
       if [[ "$checkAgainstKeycloak" == "true" ]]
       then
         # Check if the LDAP connection is added to keycloak
-        ldapsFound="$(echo "$keycloakLdapConnections" | jq -r ". | map(select(.name == \"$ldapName\"))")"
+        ldapsFound="$(jq -r ". | map(select(.name == \"$ldapName\"))" "$datadir/$keycloakLdapConnections")"
         ldapCount="$(echo "$ldapsFound" | jq -r length)"
         if [[ "$ldapCount" -eq "1" ]]
         then
@@ -330,12 +336,13 @@ function inspectIdpConnections {
     if [[ "$checkAgainstKeycloak" == "true" ]]
     then
       # Check if the SAML connection has been migrated
-      getKeycloakSamlConnections
+      getKeycloakIdpConnections
     fi
 
+    echo ""
     echo "SAML connections"
     echo "================"
-    echo "$samlConnections" | jq -c '.idp[]' | while read -r i; do
+    jq -c '.idp[]' "$datadir/$csSamlConnections" | while read -r i; do
       samlConnection=$i
       samlName="$(echo "$samlConnection" | jq -r .name)"
       migrated=" "
@@ -343,7 +350,7 @@ function inspectIdpConnections {
       if [[ "$checkAgainstKeycloak" == "true" ]]
       then
         # Check if the SAML connection is added to keycloak
-        samlsFound="$(echo "$keycloakSamlConnections" | jq -r ". | map(select(.alias == \"$samlName\"))")"
+        samlsFound="$(jq -r ". | map(select(.alias == \"$samlName\"))" "$datadir/$keycloakIdpConnections")"
         samlCount="$(echo "$samlsFound" | jq -r length)"
         if [[ "$samlCount" -eq "1" ]]
         then
@@ -354,13 +361,12 @@ function inspectIdpConnections {
     done
   fi
 
-  # Maybe we don't bother with this as it's a BETA?!?
   if [[ "$oidcCount" -gt "0" ]]; 
   then
     # TODO - Check OIDC connection in Keycloak
     echo "OIDC connections"
     echo "================"
-    echo "$oidcConnections" | jq -c '.idp[]' | while read -r i; do
+    jq -c '.idp[]' "$datadir/$csOidcConnections" | while read -r i; do
       oidcConnection=$i
       oidcName="$(echo "$oidcConnection" | jq -r .name)"
       oidcUrl="$(echo "$oidcConnection" | jq -r .idp_config.discovery_url)"
@@ -449,11 +455,34 @@ function checkIfGroupRoleAndUsersMigrated() {
 
 ## Check parameters and environment
 
+while getopts ":d:" o; do
+    case "${o}" in
+        d)
+            datadir="${OPTARG%/}"
+            mkdir -p "$datadir"
+            ;;
+        *)
+            usage "$OPTARG not a recognised parameter"
+            ;;
+    esac
+done
+shift $((OPTIND-1))
+
 if [ -z "${1-}" ]; then
     usage "ERROR: No namespace specified"
 fi
 
 namespace="${1}"
+
+# If we don't have a data dir, make a temporary one and cleanup after the run
+if [ -z "${datadir-}" ]; then
+    datadir=$(mktemp -d)
+    cleanup()
+    {
+      rm -rf "${datadir}"
+    }
+    trap cleanup EXIT
+fi
 
 if [ ! -x "$(command -v oc)" ]; then echo "You need the OpenShift CLI tool, oc"; exit 1; fi
 if [ ! -x "$(command -v jq)" ]; then echo "You need jq: https://jqlang.github.io/jq/download"; exit 1; fi
