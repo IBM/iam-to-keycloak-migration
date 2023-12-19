@@ -307,7 +307,6 @@ function inspectIdpConnections {
     echo "$ldapConnections" | jq -c '.[]' | while read -r i; do
       ldapConnection=$i
       ldapName="$(echo "$ldapConnection" | jq -r .LDAP_ID)"
-      ldapUrl="$(echo "$ldapConnection" | jq -r .LDAP_URL)"
       migrated=" "
 
       if [[ "$checkAgainstKeycloak" == "true" ]]
@@ -321,7 +320,27 @@ function inspectIdpConnections {
         fi
       fi
 
-      echo "[$migrated] Migrate $ldapName - $ldapUrl"
+      echo "[$migrated] Migrate $ldapName"
+      echo "$ldapConnection" | jq -r '
+      (.LDAP_USERIDMAP | sub("^\\*:"; "")) as $user_attribute |
+      (.LDAP_USERFILTER | [ scan("objectclass=([^)]+)") | .[0] ] | join(",")) as $object_classes |
+      (if .LDAP_NESTEDSEARCH | test("true") then "Subtree" else "One Level" end) as $search_scope |
+      (if .LDAP_PAGINGSEARCH | test("true") then "Yes" else "No" end) as $pagination |
+"    Connection name: " + .LDAP_ID + "
+    Connection URL: " + .LDAP_URL + "
+    Enable StartTLS: No
+    Bind type: simple
+    Bind DN: " + .LDAP_BINDDN + "
+    Bind credentials: <bind password>
+    Edit mode: READ_ONLY
+    Users DN: " + .LDAP_BASEDN + "
+    Username LDAP attribute: " + $user_attribute + "
+    RDN LDAP attribute: " + $user_attribute + "
+    UUID LDAP attribute: " + $user_attribute + "
+    User object classes: " + $object_classes + "
+    User LDAP filter: \"\" (Can be used to select a subset of LDAP users to federate)
+    Search scope: " + $search_scope + "
+    Pagination: " + $pagination'
     done
   fi
 
@@ -333,6 +352,7 @@ function inspectIdpConnections {
       getKeycloakSamlConnections
     fi
 
+    echo ""
     echo "SAML connections"
     echo "================"
     echo "$samlConnections" | jq -c '.idp[]' | while read -r i; do
