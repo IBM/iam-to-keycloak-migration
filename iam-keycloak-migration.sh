@@ -328,7 +328,8 @@ function inspectIdpConnections {
       (.LDAP_GROUPMEMBERIDMAP | split(":")) as [$group_object_class, $membership_ldap_attribute] |
       (if .LDAP_NESTEDSEARCH | test("true") then "Subtree" else "One Level" end) as $search_scope |
       (if .LDAP_PAGINGSEARCH | test("true") then "Yes" else "No" end) as $pagination |
-"    - Connection name: " + .LDAP_ID + "
+"    Attributes to use in Keycloak. These attributes are for information only and are not tested by this tool.
+    - Connection name: " + .LDAP_ID + "
     - Connection URL: " + .LDAP_URL + "
     - Enable StartTLS: No
     - Bind type: simple
