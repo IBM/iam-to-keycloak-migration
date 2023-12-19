@@ -307,7 +307,6 @@ function inspectIdpConnections {
     echo "$ldapConnections" | jq -c '.[]' | while read -r i; do
       ldapConnection=$i
       ldapName="$(echo "$ldapConnection" | jq -r .LDAP_ID)"
-      ldapUrl="$(echo "$ldapConnection" | jq -r .LDAP_URL)"
       migrated=" "
 
       if [[ "$checkAgainstKeycloak" == "true" ]]
@@ -321,7 +320,44 @@ function inspectIdpConnections {
         fi
       fi
 
-      echo "[$migrated] Migrate $ldapName - $ldapUrl"
+      echo "[$migrated] Migrate $ldapName"
+      echo "$ldapConnection" | jq -r '
+      (.LDAP_USERIDMAP | sub("^\\*:"; "")) as $user_attribute |
+      (.LDAP_GROUPIDMAP | sub("^\\*:"; "")) as $group_attribute |
+      (.LDAP_USERFILTER | [ scan("objectclass=([^)]+)") | .[0] ] | join(",")) as $user_object_classes |
+      (.LDAP_GROUPMEMBERIDMAP | split(":")) as [$group_object_class, $membership_ldap_attribute] |
+      (if .LDAP_NESTEDSEARCH | test("true") then "Subtree" else "One Level" end) as $search_scope |
+      (if .LDAP_PAGINGSEARCH | test("true") then "Yes" else "No" end) as $pagination |
+"    Attributes to use in Keycloak. These attributes are for information only and are not tested by this tool.
+    - Connection name: " + .LDAP_ID + "
+    - Connection URL: " + .LDAP_URL + "
+    - Enable StartTLS: No
+    - Bind type: simple
+    - Bind DN: " + .LDAP_BINDDN + "
+    - Bind credentials: <bind password>
+    - Edit mode: READ_ONLY
+    - Users DN: " + .LDAP_BASEDN + "
+    - Username LDAP attribute: " + $user_attribute + "
+    - RDN LDAP attribute: " + $user_attribute + "
+    - UUID LDAP attribute: " + $user_attribute + "
+    - User object classes: " + $user_object_classes + "
+    - User LDAP filter: \"\" (Can be used to select a subset of LDAP users to federate)
+    - Search scope: " + $search_scope + "
+    - Pagination: " + $pagination + "
+    - Group mapper: (to import LDAP groups to Keycloak)
+      - Name: groups
+      - Mapper type: group-ldap-mapper
+      - LDAP Groups DN: " + .LDAP_BASEDN + "
+      - Group Name LDAP Attribute: " + $group_attribute + "
+      - Group Object classes: " + $group_object_class + "
+      - Membership LDAP Attribute: " + $membership_ldap_attribute + "
+      - Membership Attribute Type: DN
+      - Membership User LDAP Attribute: (Unused)
+      - LDAP Filter: \"\" (Can be used to select a subset of LDAP groups to federate),
+      - Mode: READ_ONLY
+      - User Groups Retrieve Strategy: LOAD_GROUPS_BY_MEMBER_ATTRIBUTE
+      - Member-Of LDAP Attribute: (Unused)
+      - Mapped Group Attributes: \"\" (Can be used to load LDAP attributes into Keycloak)"'
     done
   fi
 
@@ -333,6 +369,7 @@ function inspectIdpConnections {
       getKeycloakSamlConnections
     fi
 
+    echo ""
     echo "SAML connections"
     echo "================"
     echo "$samlConnections" | jq -c '.idp[]' | while read -r i; do
