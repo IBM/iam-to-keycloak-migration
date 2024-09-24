@@ -438,7 +438,7 @@ function getMembersFromGroup() {
 
 function checkIfGroupRoleAndUsersMigrated() {
   getMembers="$1"
-  groupMembers="$2"
+  groupMembers="${2-undefined}"
   # Has the group been created?
   getKeycloakGroup "$groupName"
   groupFound="$(echo "$keycloakGroups" | jq -r length)"
