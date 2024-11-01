@@ -407,7 +407,7 @@ function inspectIdpConnections {
 }
 
 function getKeycloakGroup() {
-  keycloakGroups="$(curl -ks "https://$keycloakUrl/admin/realms/$keycloakCloudPakRealm/ui-ext/groups?search=$1&exact=true" \
+  keycloakGroups="$(curl -ks "https://$keycloakUrl/admin/realms/$keycloakCloudPakRealm/groups?search=$1&exact=true" \
   --header "Authorization: Bearer $keycloakAccessToken")"
 
   # Check we have not got an error
