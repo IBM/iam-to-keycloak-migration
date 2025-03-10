@@ -557,7 +557,7 @@ then
   # Get the name of the keycloak client
   cp4iKeycloakClientId="$(oc get integrationkeycloakclient.keycloak.integration.ibm.com -l app.kubernetes.io/name=ibm-integration-platform-navigator -n "$servicesNamespace" -o jsonpath='{.items[0].spec.client.clientId}')"
 
-  keycloakAdminSecretName="cs-keycloak-initial-admin"
+  keycloakAdminSecretName="internal-keycloak-user-secret"
   keycloakAdminPass="$(oc get secret "$keycloakAdminSecretName" -n "$servicesNamespace" -o jsonpath="{.data.password}" | base64 -d)"
 
   getKeycloakcsAccessToken
