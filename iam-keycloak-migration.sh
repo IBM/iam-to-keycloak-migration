@@ -73,7 +73,7 @@ function getKeycloakcsAccessToken {
     keycloakAccessToken="$(curl -ks --location "https://$keycloakUrl/realms/$keycloakRealm/protocol/openid-connect/token" \
     --header "Content-Type: application/x-www-form-urlencoded" \
     --data-urlencode "password=$keycloakAdminPass" \
-    --data-urlencode "username=admin" \
+    --data-urlencode "username=$keycloakAdminUser" \
     --data-urlencode "client_id=admin-cli" \
     --data-urlencode "grant_type=password" \
     | jq -r .access_token)"
@@ -265,7 +265,7 @@ function checkForOidcConnections {
 function getKeycloakLdapConnections {
   keycloakLdapConnections="$(curl -ks "https://$keycloakUrl/admin/realms/$keycloakCloudPakRealm/components?type=org.keycloak.storage.UserStorageProvider" \
   --header "Authorization: Bearer $keycloakAccessToken")"
-
+  
   # Check we have not got an error
   hasError="$(echo "$keycloakLdapConnections" | jq 'if type=="array" then false else has("error") end')"
   if [ "$hasError" == "true" ]
@@ -557,15 +557,16 @@ then
   # Get the name of the keycloak client
   cp4iKeycloakClientId="$(oc get integrationkeycloakclient.keycloak.integration.ibm.com -l app.kubernetes.io/name=ibm-integration-platform-navigator -n "$servicesNamespace" -o jsonpath='{.items[0].spec.client.clientId}')"
 
-  keycloakAdminSecretName="cs-keycloak-initial-admin"
   keycloakIntegrationAdminSecretName="internal-keycloak-user-secret"
   keycloakIntegrationUserName="internal-keycloak-user"
-  secretToFetch=$keycloakAdminSecretName
+  secretToFetch="cs-keycloak-initial-admin"
+  keycloakAdminUser="admin"
   
   # Check the integration internal IKU is reconciled and if so, use it otherwise fallback to the CS one
-  integrationIKUPhase="$(oc get integrationkeycloakuser "$keycloakIntegrationUserName" -n "$servicesNamespace" -o jsonpath='{.status.phase')"
-  if [[ "$integrationIKUPhase" == "reconciled" ]]
+  integrationIKUPhase="$(oc get integrationkeycloakuser "$keycloakIntegrationUserName" -n "$servicesNamespace" -o jsonpath='{.status.phase}')"
+  if [[ "$integrationIKUPhase" == "reconciled" ]]; then
     secretToFetch=$keycloakIntegrationAdminSecretName
+    keycloakAdminUser="internal-keycloak-user"
   fi  
   keycloakAdminPass="$(oc get secret "$secretToFetch" -n "$servicesNamespace" -o jsonpath="{.data.password}" | base64 -d)"
 
