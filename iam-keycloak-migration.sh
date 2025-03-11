@@ -557,12 +557,14 @@ then
   # Get the name of the keycloak client
   cp4iKeycloakClientId="$(oc get integrationkeycloakclient.keycloak.integration.ibm.com -l app.kubernetes.io/name=ibm-integration-platform-navigator -n "$servicesNamespace" -o jsonpath='{.items[0].spec.client.clientId}')"
 
-  keycloakIntegrationAdminSecretName="internal-keycloak-user-secret"
   keycloakIntegrationUserName="internal-keycloak-user"
+  keycloakIntegrationAdminSecretName="internal-keycloak-user-secret"
+  
+  # Default to the CS values, until we can validate that our internal IKU is fully reconciled
   secretToFetch="cs-keycloak-initial-admin"
   keycloakAdminUser="admin"
   
-  # Check the integration internal IKU is reconciled and if so, use it otherwise fallback to the CS one
+  # Check the integration internal IKU is reconciled and if so, use t instead of the CS one
   integrationIKUPhase="$(oc get integrationkeycloakuser "$keycloakIntegrationUserName" -n "$servicesNamespace" -o jsonpath='{.status.phase}')"
   if [[ "$integrationIKUPhase" == "reconciled" ]]; then
     secretToFetch=$keycloakIntegrationAdminSecretName
