@@ -265,7 +265,7 @@ function checkForOidcConnections {
 function getKeycloakLdapConnections {
   keycloakLdapConnections="$(curl -ks "https://$keycloakUrl/admin/realms/$keycloakCloudPakRealm/components?type=org.keycloak.storage.UserStorageProvider" \
   --header "Authorization: Bearer $keycloakAccessToken")"
-  
+
   # Check we have not got an error
   hasError="$(echo "$keycloakLdapConnections" | jq 'if type=="array" then false else has("error") end')"
   if [ "$hasError" == "true" ]
