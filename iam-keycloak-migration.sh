@@ -563,8 +563,8 @@ then
   secretToFetch=$keycloakAdminSecretName
   
   # Check the integration internal IKU is reconciled and if so, use it otherwise fallback to the CS one
-  integrationIKUPhase="$(oc get integrationkeycloakuser "$keycloakIntegrationUserName" -n "$servicesNamespace" -o jsonpath='{.status.phase')"
-  if [[ "$integrationIKUPhase" == "reconciled" ]]
+  integrationIKUPhase="$(oc get integrationkeycloakuser "$keycloakIntegrationUserName" -n "$servicesNamespace" -o jsonpath='{.status.phase}')"
+  if [[ "$integrationIKUPhase" == "reconciled" ]]; then
     secretToFetch=$keycloakIntegrationAdminSecretName
   fi  
   keycloakAdminPass="$(oc get secret "$secretToFetch" -n "$servicesNamespace" -o jsonpath="{.data.password}" | base64 -d)"
