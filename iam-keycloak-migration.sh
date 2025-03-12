@@ -565,7 +565,7 @@ then
   keycloakAdminUser="admin"
   
   # Check the integration internal IKU is reconciled and if so, use t instead of the CS one
-  integrationIKUPhase="$(oc get integrationkeycloakuser "$keycloakIntegrationUserName" -n "$servicesNamespace" -o jsonpath='{.status.phase}')"
+  integrationIKUPhase="$(oc get integrationkeycloakuser "$keycloakIntegrationUserName" -n "$servicesNamespace" -o jsonpath='{.status.phase}' --ignore-not-found=true)"
   if [[ "$integrationIKUPhase" == "reconciled" ]]; then
     secretToFetch=$keycloakIntegrationAdminSecretName
     keycloakAdminUser="internal-keycloak-user"
