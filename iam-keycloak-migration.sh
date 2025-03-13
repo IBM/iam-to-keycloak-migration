@@ -73,7 +73,7 @@ function getKeycloakcsAccessToken {
     keycloakAccessToken="$(curl -ks --location "https://$keycloakUrl/realms/$keycloakRealm/protocol/openid-connect/token" \
     --header "Content-Type: application/x-www-form-urlencoded" \
     --data-urlencode "password=$keycloakAdminPass" \
-    --data-urlencode "username=admin" \
+    --data-urlencode "username=$keycloakAdminUser" \
     --data-urlencode "client_id=admin-cli" \
     --data-urlencode "grant_type=password" \
     | jq -r .access_token)"
@@ -557,8 +557,20 @@ then
   # Get the name of the keycloak client
   cp4iKeycloakClientId="$(oc get integrationkeycloakclient.keycloak.integration.ibm.com -l app.kubernetes.io/name=ibm-integration-platform-navigator -n "$servicesNamespace" -o jsonpath='{.items[0].spec.client.clientId}')"
 
-  keycloakAdminSecretName="cs-keycloak-initial-admin"
-  keycloakAdminPass="$(oc get secret "$keycloakAdminSecretName" -n "$servicesNamespace" -o jsonpath="{.data.password}" | base64 -d)"
+  keycloakIntegrationUserName="internal-keycloak-user"
+  keycloakIntegrationAdminSecretName="internal-keycloak-user-secret"
+  
+  # Default to the CS values, until we can validate that our internal IKU is fully reconciled
+  secretToFetch="cs-keycloak-initial-admin"
+  keycloakAdminUser="admin"
+  
+  # Check the integration internal IKU is reconciled and if so, use t instead of the CS one
+  integrationIKUPhase="$(oc get integrationkeycloakuser "$keycloakIntegrationUserName" -n "$servicesNamespace" -o jsonpath='{.status.phase}' --ignore-not-found=true)"
+  if [[ "$integrationIKUPhase" == "reconciled" ]]; then
+    secretToFetch="$keycloakIntegrationAdminSecretName"
+    keycloakAdminUser="$keycloakIntegrationUserName"
+  fi  
+  keycloakAdminPass="$(oc get secret "$secretToFetch" -n "$servicesNamespace" -o jsonpath="{.data.password}" | base64 -d)"
 
   getKeycloakcsAccessToken
 fi
